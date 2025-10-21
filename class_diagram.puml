@@ -1,0 +1,227 @@
+@startuml BREX_Class_Diagram
+
+' Interfaces
+interface Drawable {
+  +draw(g2d: Graphics2D): void
+}
+
+interface Updatable {
+  +update(deltaMs: long): void
+}
+
+interface Collidable {
+  +getCenterX(): int
+  +getCenterY(): int
+  +getCollisionRadius(): int
+  +collidesWith(other: Collidable): boolean
+}
+
+' Abstract Base Class
+abstract class GameObject {
+  #x: double
+  #y: double
+  #width: int
+  #height: int
+  #collisionRadius: int
+  +GameObject(x: double, y: double, width: int, height: int)
+  +getCenterX(): int
+  +getCenterY(): int
+  +getCollisionRadius(): int
+  +collidesWith(other: Collidable): boolean
+  +getX(): double
+  +getY(): double
+  +getWidth(): int
+  +getHeight(): int
+  {abstract} +draw(g2d: Graphics2D): void
+  {abstract} +update(deltaMs: long): void
+}
+
+' Concrete Entity Classes
+class Player {
+  -health: int
+  -maxHealth: int
+  -speed: int
+  -facingAngle: double
+  -spacecraftType: int
+  -shieldCurrent: int
+  -shieldMax: int
+  +Player(x: int, y: int, type: int, hp: int, speed: int, firerate: int)
+  +useSpecial(worldW: int, worldH: int): void
+  +consumeDamage(dmg: int): void
+  +draw(g2d: Graphics2D): void
+  +update(deltaMs: long): void
+}
+
+class Enemy {
+  -type: EnemyType
+  -health: int
+  -speed: double
+  -sprite: BufferedImage
+  +Enemy(x: int, y: int, type: EnemyType)
+  +draw(g2d: Graphics2D): void
+  +update(deltaMs: long): void
+}
+
+class Bullet {
+  -angle: double
+  -speed: double
+  -creationTime: long
+  +Bullet(x: int, y: int, angle: double, speed: double)
+  +isExpired(): boolean
+  +draw(g2d: Graphics2D): void
+  +update(deltaMs: long): void
+}
+
+class EnemyBullet {
+  -vx: double
+  -vy: double
+  -accelerateToPlayer: boolean
+  +EnemyBullet(x: int, y: int, targetX: int, targetY: int)
+  +draw(g2d: Graphics2D): void
+  +update(deltaMs: long): void
+}
+
+class PowerUp {
+  -type: PowerUpType
+  +PowerUp(x: int, y: int)
+  +draw(g2d: Graphics2D): void
+  +update(deltaMs: long): void
+}
+
+' Manager Classes
+class GameStateManager {
+  -currentState: GameState
+  -lastState: GameState
+  +GameStateManager()
+  +setState(newState: GameState): void
+  +getCurrentState(): GameState
+  +getLastState(): GameState
+  +isInGame(): boolean
+  +returnToPreviousState(): void
+}
+
+class EntityManager {
+  -entities: List<GameObject>
+  -entitiesToAdd: List<GameObject>
+  -entitiesToRemove: List<GameObject>
+  +EntityManager()
+  +addEntity(entity: GameObject): void
+  +removeEntity(entity: GameObject): void
+  +updateAll(deltaMs: long): void
+  +drawAll(g2d: Graphics2D): void
+  +getEntitiesOfType<T>(type: Class<T>): List<T>
+  +clear(): void
+  +getAllEntities(): List<GameObject>
+  +getEntityCount(): int
+}
+
+class CollisionManager {
+  +checkCollisions<T,U>(first: List<T>, second: List<U>, handler: CollisionHandler): void
+  +findCollision<T,U>(object: T, list: List<U>): U
+}
+
+class InputManager {
+  -pressedKeys: Set<Integer>
+  -justPressedKeys: Set<Integer>
+  +InputManager()
+  +isKeyPressed(keyCode: int): boolean
+  +isKeyJustPressed(keyCode: int): boolean
+  +clearJustPressed(): void
+  +isUpPressed(): boolean
+  +isDownPressed(): boolean
+  +isLeftPressed(): boolean
+  +isRightPressed(): boolean
+}
+
+' Main Game Controller
+class SpaceGame {
+  -stateManager: GameStateManager
+  -entityManager: EntityManager
+  -collisionManager: CollisionManager
+  -inputManager: InputManager
+  -player: Player
+  -score: int
+  -level: int
+  +SpaceGame()
+  +update(): void
+  +paintComponent(g: Graphics): void
+  +handleInput(): void
+}
+
+class App {
+  +main(args: String[]): void
+}
+
+' Relationships - Implements
+GameObject ..|> Drawable
+GameObject ..|> Updatable
+GameObject ..|> Collidable
+
+' Relationships - Extends
+Player --|> GameObject
+Enemy --|> GameObject
+Bullet --|> GameObject
+EnemyBullet --|> GameObject
+PowerUp --|> GameObject
+
+' Relationships - Composition
+SpaceGame *-- GameStateManager : contains
+SpaceGame *-- EntityManager : contains
+SpaceGame *-- CollisionManager : contains
+SpaceGame *-- InputManager : contains
+SpaceGame o-- Player : has current player
+
+EntityManager o-- GameObject : manages many
+
+' Relationships - Uses
+App ..> SpaceGame : creates
+
+' Enums
+enum GameState {
+  MENU
+  SPACECRAFT_SELECT
+  GAME
+  OPTIONS
+  EXIT_CONFIRM
+}
+
+enum EnemyType {
+  TYPE1
+  TYPE2
+  TYPE3
+}
+
+enum PowerUpType {
+  HEALTH
+  SPEED
+  FIRE_RATE
+}
+
+GameStateManager -- GameState : uses
+Enemy -- EnemyType : uses
+PowerUp -- PowerUpType : uses
+
+' Notes
+note right of GameObject
+  Abstract base class providing
+  common functionality for all
+  game entities. Implements all
+  three core interfaces.
+end note
+
+note right of EntityManager
+  Centralized management of
+  all game entities. Handles
+  updates, drawing, and
+  lifecycle management.
+end note
+
+note bottom of SpaceGame
+  Main game controller.
+  Delegates responsibilities
+  to specialized managers.
+  Follows Single Responsibility
+  Principle.
+end note
+
+@enduml
