@@ -221,7 +221,7 @@ java -cp bin App
 2. `class_diagram.puml` - PlantUML diagram
 3. `REFACTORING_GUIDE.md` - คู่มือ refactor
 4. `SIMPLE_DIAGRAM.md` - Diagram แบบง่ายสุด
-5. `README_OOP.md` - สรุปภาษาอังกฤษ
+5. `README_OOP.md` - สรุปภาษาอังกฤษss
 6. `README_TH.md` - **ไฟล์นี้** (สรุปภาษาไทย)
 
 ---
