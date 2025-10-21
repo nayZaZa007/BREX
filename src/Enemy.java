@@ -8,7 +8,7 @@ public class Enemy {
     public enum EnemyType {
         TYPE1,  // enemy1.png - common, shoots 1 bullet
         TYPE2,  // enemy2.png - rare, shoots 6 bullets in circle, 1.5x size
-        TYPE3   // enemy3.png - common, shoots 1 bullet
+        TYPE3   // enemy3.png - common, shoots 1 bullet อยากจะร้องไห้
     }
     
     private EnemyType type;
