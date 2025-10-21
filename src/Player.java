@@ -12,7 +12,7 @@ public class Player {
     private int maxHealth;
     private int speed;
     private long lastShotTime;
-    private int fireRate; // milliseconds between shots
+    private int fireRate; // milliseconds between shots ddd
     private BufferedImage spriteHighFire;
     private double facingAngle = -Math.PI / 2.0; // radians, 0 = right; set to face up initially
     // Smooth rotation target and speed
