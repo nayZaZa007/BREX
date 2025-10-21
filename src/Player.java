@@ -35,7 +35,7 @@ public class Player {
     // Spacecraft / special ability state
     private int spacecraftType = 0; // 0=Large,1=Medium,2=Small
     private long lastSpecialUseTime = 0;
-    private long specialCooldownMs = 30000; // default 30s
+    private long specialCooldownMs = 30000; // default 30sddd
     // Large: shield
     private int shieldMax = 0;
     private int shieldCurrent = 0;
