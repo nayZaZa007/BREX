@@ -28,6 +28,8 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
     private ArrayList<Bullet> bullets;
     private ArrayList<EnemyBullet> enemyBullets;
     private ArrayList<PowerUp> powerUps;
+    private ArrayList<DamagePopup> damagePopups;
+    private ArrayList<ExplosionParticle> explosionParticles;
     private Random random;
     private int score;
     private int level;
@@ -36,6 +38,11 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
     private long lastEnemySpawn;
     private boolean gameRunning;
     private long lastUpdateTimeMillis = System.currentTimeMillis();
+    
+    // Boss
+    private Boss boss;
+    private boolean bossSpawned = false;
+    private static final long BOSS_SPAWN_TIME = 210000; // 3.5 minutes in milliseconds
     
     // Camera System
     private int cameraX, cameraY;
@@ -143,7 +150,11 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         bullets = new ArrayList<>();
         enemyBullets = new ArrayList<>();
         powerUps = new ArrayList<>();
+        damagePopups = new ArrayList<>();
+        explosionParticles = new ArrayList<>();
         random = new Random();
+        boss = null;
+        bossSpawned = false;
         
         // Initialize background stars
         initializeBackground();
@@ -221,8 +232,15 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         // Update camera to follow player
         updateCamera();
         
-        // Spawn enemies
-        if (System.currentTimeMillis() - lastEnemySpawn > enemySpawnRate) {
+        // Check for Boss spawn at 3.5 minutes
+        long elapsedTime = System.currentTimeMillis() - gameStartTime;
+        if (!bossSpawned && elapsedTime >= BOSS_SPAWN_TIME) {
+            spawnBoss();
+            bossSpawned = true;
+        }
+        
+        // Spawn enemies (stop spawning when boss appears)
+        if (!bossSpawned && System.currentTimeMillis() - lastEnemySpawn > enemySpawnRate) {
             spawnEnemy();
             lastEnemySpawn = System.currentTimeMillis();
             System.out.println("Enemy spawned! Total enemies: " + enemies.size());
@@ -279,16 +297,42 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
             while (enemyIterator2.hasNext()) {
                 Enemy enemy = enemyIterator2.next();
                 if (bullet.collidesWith(enemy)) {
-                    enemyIterator2.remove();
+                    int dmg = bullet.getDamage();
+                    enemy.takeDamage(dmg);
+                    damagePopups.add(new DamagePopup(enemy.getX(), enemy.getY(), dmg, Color.YELLOW));
                     bulletIterator.remove();
-                    score += 10;
-                    System.out.println("Enemy destroyed! Score: " + score);
                     
-                    // Chance to spawn power-up
-                    if (random.nextInt(10) == 0) {
-                        powerUps.add(new PowerUp(enemy.getX(), enemy.getY()));
+                    if (enemy.isDead()) {
+                        enemyIterator2.remove();
+                        score += 10;
+                        System.out.println("Enemy destroyed! Score: " + score);
+                        
+                        // Chance to spawn power-up
+                        if (random.nextInt(10) == 0) {
+                            powerUps.add(new PowerUp(enemy.getX(), enemy.getY()));
+                        }
+                    } else {
+                        System.out.println("Enemy hit! HP: " + enemy.getHealth() + "/" + enemy.getMaxHealth());
                     }
                     break;
+                }
+            }
+            
+            // Check bullet-boss collision
+            if (boss != null && !boss.isDead() && bullet.collidesWith(boss)) {
+                int dmg = bullet.getDamage();
+                boss.takeDamage(dmg);
+                damagePopups.add(new DamagePopup(boss.getX(), boss.getY(), dmg, Color.RED));
+                bulletIterator.remove();
+                System.out.println("Boss hit! HP: " + boss.getHealth() + "/" + boss.getMaxHealth());
+                
+                if (boss.isDead()) {
+                    System.out.println("=== BOSS DEFEATED ===");
+                    // Create explosion particles
+                    for (int i = 0; i < 50; i++) {
+                        explosionParticles.add(new ExplosionParticle(boss.getX(), boss.getY()));
+                    }
+                    score += 500;
                 }
             }
         }
@@ -308,15 +352,84 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
             
             // Check collision with player
             if (enemyBullet.collidesWith(player)) {
-                // Use consumeDamage so shield can absorb first
-                player.consumeDamage(5); // Less damage than direct enemy contact
+                int dmg = enemyBullet.getDamage();
+                player.consumeDamage(dmg);
+                damagePopups.add(new DamagePopup(player.getX(), player.getY(), dmg, Color.RED));
                 enemyBulletIterator.remove();
-                System.out.println("Player hit by bullet! Health: " + player.getHealth());
+                System.out.println("Player hit by bullet! Health: " + player.getHealth() + " (damage: " + dmg + ")");
                 
                 if (player.getHealth() <= 0) {
                     System.out.println("Game Over! Final Score: " + score);
                     gameRunning = false;
                 }
+            }
+        }
+        
+        // Update Boss
+        if (boss != null && !boss.isDead()) {
+            boss.update(player, delta);
+            
+            // Boss shooting
+            long currentTime = System.currentTimeMillis();
+            if (currentTime - boss.getLastShotTime() > boss.getFireRate()) {
+                // Boss fires bullets at player
+                int bx = (int)boss.getX();
+                int by = (int)boss.getY();
+                int px = player.getX();
+                int py = player.getY();
+                enemyBullets.add(new EnemyBullet(bx, by, px, py));
+                boss.setLastShotTime(currentTime);
+                System.out.println("Boss fired bullet!");
+            }
+            
+            // Boss collision with player
+            if (boss.collidesWith(player)) {
+                player.consumeDamage(20);
+                damagePopups.add(new DamagePopup(player.getX(), player.getY(), 20, Color.RED));
+                System.out.println("Player hit by Boss! Health: " + player.getHealth());
+                
+                if (player.getHealth() <= 0) {
+                    System.out.println("Game Over! Final Score: " + score);
+                    gameRunning = false;
+                }
+            }
+        }
+        
+        // Check laser hits from TYPE1 enemies
+        for (Enemy enemy : enemies) {
+            if (enemy.getType() == Enemy.EnemyType.TYPE1) {
+                LaserBeam laser = enemy.getActiveLaser();
+                if (laser != null && laser.hitsPlayer(player)) {
+                    int dmg = laser.getDamage();
+                    player.consumeDamage(dmg);
+                    damagePopups.add(new DamagePopup(player.getX(), player.getY(), dmg, Color.ORANGE));
+                    System.out.println("Player hit by laser! Health: " + player.getHealth() + " (damage: " + dmg + ")");
+                    
+                    if (player.getHealth() <= 0) {
+                        System.out.println("Game Over! Final Score: " + score);
+                        gameRunning = false;
+                    }
+                }
+            }
+        }
+        
+        // Update damage popups
+        Iterator<DamagePopup> popupIterator = damagePopups.iterator();
+        while (popupIterator.hasNext()) {
+            DamagePopup popup = popupIterator.next();
+            popup.update(delta);
+            if (popup.isExpired()) {
+                popupIterator.remove();
+            }
+        }
+        
+        // Update explosion particles
+        Iterator<ExplosionParticle> particleIterator = explosionParticles.iterator();
+        while (particleIterator.hasNext()) {
+            ExplosionParticle particle = particleIterator.next();
+            particle.update();
+            if (particle.isExpired()) {
+                particleIterator.remove();
             }
         }
         
@@ -342,8 +455,8 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         }
         
         // Increase difficulty over time
-        long elapsedTime = System.currentTimeMillis() - gameStartTime;
-        int newLevel = (int) (elapsedTime / 20000) + 1; // New level every 20 seconds
+        long currentElapsed = System.currentTimeMillis() - gameStartTime;
+        int newLevel = (int) (currentElapsed / 20000) + 1; // New level every 20 seconds
         if (newLevel > level) {
             level = newLevel;
             System.out.println("Level up! Now at level: " + level);
@@ -420,6 +533,12 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         }
     }
     
+    private void spawnBoss() {
+        System.out.println("=== BOSS SPAWNED ===");
+        // Spawn boss in the center of the world
+        boss = new Boss(WORLD_WIDTH / 2, WORLD_HEIGHT / 2);
+    }
+    
     private void shootEnemyBullets(Enemy enemy) {
         int ex = enemy.getX();
         int ey = enemy.getY();
@@ -428,10 +547,14 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         
         switch (enemy.getType()) {
             case TYPE1:
+                // Start laser charging
+                enemy.startLaser(px, py);
+                System.out.println("Enemy TYPE1 started laser charging!");
+                break;
             case TYPE3:
                 // Shoot 1 bullet toward player
                 enemyBullets.add(new EnemyBullet(ex, ey, px, py));
-                System.out.println("Enemy (Type " + enemy.getType() + ") fired 1 bullet! Total: " + enemyBullets.size());
+                System.out.println("Enemy TYPE3 fired 1 bullet! Total: " + enemyBullets.size());
                 break;
                 
             case TYPE2:
@@ -440,7 +563,7 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                     double angle = (Math.PI * 2.0 / 6.0) * i;
                     enemyBullets.add(new EnemyBullet(ex, ey, angle, px, py));
                 }
-                System.out.println("Enemy (Type2) fired 6 bullets! Total: " + enemyBullets.size());
+                System.out.println("Enemy TYPE2 fired 6 bullets! Total: " + enemyBullets.size());
                 break;
         }
     }
@@ -552,6 +675,21 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                         powerUp.draw(g2d);
                     }
                     
+                    // Draw Boss
+                    if (boss != null && !boss.isDead()) {
+                        boss.draw(g2d);
+                    }
+                    
+                    // Draw damage popups
+                    for (DamagePopup popup : damagePopups) {
+                        popup.draw(g2d);
+                    }
+                    
+                    // Draw explosion particles
+                    for (ExplosionParticle particle : explosionParticles) {
+                        particle.draw(g2d);
+                    }
+                    
                     // Reset camera transformation for UI
                     g2d.translate(cameraX, cameraY);
                     
@@ -593,6 +731,26 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         g2d.drawString("Level: " + level, 10, 45);
         g2d.drawString("Health: " + player.getHealth(), 10, 65);
         
+        // Timer countdown (3.5 minutes = 210 seconds)
+        long elapsedMs = System.currentTimeMillis() - gameStartTime;
+        long remainingMs = Math.max(0, BOSS_SPAWN_TIME - elapsedMs);
+        int remainingSeconds = (int)(remainingMs / 1000);
+        int minutes = remainingSeconds / 60;
+        int seconds = remainingSeconds % 60;
+        
+        if (!bossSpawned) {
+            g2d.setColor(Color.CYAN);
+            g2d.setFont(new Font("Arial", Font.BOLD, 18));
+            String timerText = String.format("Boss in: %d:%02d", minutes, seconds);
+            g2d.drawString(timerText, SCREEN_WIDTH / 2 - 70, 25);
+        } else {
+            g2d.setColor(Color.RED);
+            g2d.setFont(new Font("Arial", Font.BOLD, 18));
+            g2d.drawString("BOSS FIGHT!", SCREEN_WIDTH / 2 - 60, 25);
+        }
+        g2d.setFont(new Font("Arial", Font.BOLD, 16));
+        g2d.setColor(Color.WHITE);
+        
         // Health bar (scale based on player's max health)
         int hbX = 10;
         int hbY = 75;
@@ -624,10 +782,10 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         long cd = player.getSpecialCooldownMs();
         long now = System.currentTimeMillis();
         long remaining = Math.max(0, cd - (now - lastUse));
-        int seconds = (int) Math.ceil(remaining / 1000.0);
+        int cooldownSeconds = (int) Math.ceil(remaining / 1000.0);
         g2d.setFont(new Font("Arial", Font.PLAIN, 14));
         g2d.setColor(remaining > 0 ? Color.GRAY : Color.GREEN);
-        g2d.drawString("Special (F): " + (remaining > 0 ? (seconds + "s") : "Ready"), 10, 115);
+        g2d.drawString("Special (F): " + (remaining > 0 ? (cooldownSeconds + "s") : "Ready"), 10, 115);
     }
     
     private void drawMainMenu(Graphics2D g2d) {

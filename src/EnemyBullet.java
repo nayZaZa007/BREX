@@ -1,13 +1,16 @@
 import java.awt.*;
 import java.awt.geom.AffineTransform;
+import java.util.Random;
 
 public class EnemyBullet {
+    private static Random rand = new Random();
     private double x, y;
     private double dx, dy;
     private int width, height;
     private double speed;
     private long creationTime;
     private static final long BULLET_LIFETIME = 60000; // 1 minute in milliseconds
+    private int damage; // Random damage
     
     // For TYPE2 bullets: acceleration toward player
     private boolean hasAcceleration;
@@ -27,6 +30,7 @@ public class EnemyBullet {
         this.speed = 3; // ช้ากว่ากระสุนผู้เล่น
         this.creationTime = System.currentTimeMillis();
         this.hasAcceleration = false;
+        this.damage = 3 + rand.nextInt(4); // 3-6 damage
         
         // Calculate direction towards player
         double distance = Math.sqrt(Math.pow(targetX - startX, 2) + Math.pow(targetY - startY, 2));
@@ -50,6 +54,7 @@ public class EnemyBullet {
         // set aimed point as the player's position at firing time
         this.aimedX = targetPlayerX;
         this.aimedY = targetPlayerY;
+        this.damage = 4 + rand.nextInt(5); // 4-8 damage
         
         // Initial velocity from angle
         this.dx = Math.cos(initialAngle) * speed;
@@ -121,6 +126,8 @@ public class EnemyBullet {
     public boolean isExpired() {
         return System.currentTimeMillis() - creationTime > BULLET_LIFETIME;
     }
+    
+    public int getDamage() { return damage; }
     
     // Getters
     public double getX() { return x; }

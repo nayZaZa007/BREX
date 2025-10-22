@@ -1,13 +1,16 @@
 import java.awt.*;
 import java.awt.geom.AffineTransform;
+import java.util.Random;
 
 public class Bullet {
+    private static Random rand = new Random();
     private double x, y;
     private double dx, dy;
     private int width, height;
     private double speed;
     private long creationTime;
     private static final long BULLET_LIFETIME = 60000; // 1 minute in milliseconds
+    private int damage; // Random damage
     
     public Bullet(int startX, int startY, int targetX, int targetY) {
         this.x = startX;
@@ -16,6 +19,7 @@ public class Bullet {
         this.height = 8;
         this.speed = 10;
         this.creationTime = System.currentTimeMillis();
+        this.damage = 8 + rand.nextInt(5); // 8-12 damage
         
         // Calculate direction towards target
         double distance = Math.sqrt(Math.pow(targetX - startX, 2) + Math.pow(targetY - startY, 2));
@@ -33,6 +37,7 @@ public class Bullet {
         this.height = 8;
         this.speed = speed;
         this.creationTime = System.currentTimeMillis();
+        this.damage = 8 + rand.nextInt(5); // 8-12 damage
 
         this.dx = Math.cos(angle) * speed;
         this.dy = Math.sin(angle) * speed;
@@ -68,6 +73,13 @@ public class Bullet {
                y <= enemy.getY() + enemy.getHeight()/2;
     }
     
+    public boolean collidesWith(Boss boss) {
+        double dx = x - boss.getX();
+        double dy = y - boss.getY();
+        double dist = Math.sqrt(dx*dx + dy*dy);
+        return dist < boss.getHitboxRadius() + 4; // bullet radius ~4
+    }
+    
     public boolean isOffScreen(int gameWidth, int gameHeight) {
         return x < 0 || x > gameWidth || y < 0 || y > gameHeight;
     }
@@ -81,4 +93,5 @@ public class Bullet {
     public double getY() { return y; }
     public int getWidth() { return width; }
     public int getHeight() { return height; }
+    public int getDamage() { return damage; }
 }
