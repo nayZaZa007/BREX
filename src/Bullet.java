@@ -43,6 +43,23 @@ public class Bullet {
         this.dy = Math.sin(angle) * speed;
     }
     
+    // Constructor with custom damage multiplier for manual mode
+    public Bullet(int startX, int startY, double angle, double speed, double damageMultiplier) {
+        this.x = startX;
+        this.y = startY;
+        this.width = 8;
+        this.height = 8;
+        this.speed = speed;
+        this.creationTime = System.currentTimeMillis();
+        // Apply damage multiplier
+        int baseDamage = 8 + rand.nextInt(5); // 8-12 damage
+        this.damage = (int) Math.round(baseDamage * damageMultiplier);
+
+        this.dx = Math.cos(angle) * speed;
+        this.dy = Math.sin(angle) * speed;
+    }
+
+    
     public void update() {
         x += dx;
         y += dy;

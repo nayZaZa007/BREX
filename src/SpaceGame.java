@@ -1,6 +1,7 @@
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.*;
+import java.awt.geom.AffineTransform;
 import java.awt.image.BufferedImage;
 import javax.imageio.ImageIO;
 import java.io.File;
@@ -13,7 +14,7 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
     
     // Game States
     public enum GameState {
-        MENU, SPACECRAFT_SELECT, GAME, OPTIONS, EXIT_CONFIRM
+        MENU, SPACECRAFT_SELECT, GAME, OPTIONS, EXIT_CONFIRM, PAUSED
     }
     
     private static final int SCREEN_WIDTH = 1000;  // หน้าจอที่เห็น
@@ -44,6 +45,10 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
     private boolean bossSpawned = false;
     private static final long BOSS_SPAWN_TIME = 210000; // 3.5 minutes in milliseconds
     
+    // TYPE1 enemy spawn cap
+    private int type1MaxCap = 1; // Random 1-6
+    private long lastCapUpdate = 0;
+    
     // Camera System
     private int cameraX, cameraY;
     
@@ -61,6 +66,7 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
     private final String[] mainMenuOptions = {"Play", "Options", "Exit"};
     // Options will be generated from state (volume + fullscreen)
     private String[] optionsMenuItems;
+    private final String[] pauseMenuOptions = {"Resume", "Settings", "Return to Main Menu"};
 
     // Options state
     private int volume; // 0-100
@@ -85,6 +91,10 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
     
     // Controls
     private boolean upPressed, downPressed, leftPressed, rightPressed;
+    
+    // Manual control mode
+    private boolean manualControlMode = false;
+    private boolean arrowUpPressed, arrowDownPressed, arrowLeftPressed, arrowRightPressed;
     
     public SpaceGame() {
         this.setPreferredSize(new Dimension(SCREEN_WIDTH, SCREEN_HEIGHT));
@@ -155,6 +165,8 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         random = new Random();
         boss = null;
         bossSpawned = false;
+        type1MaxCap = 1 + random.nextInt(6); // Random 1-6
+        lastCapUpdate = System.currentTimeMillis();
         
         // Initialize background stars
         initializeBackground();
@@ -231,6 +243,13 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         
         // Update camera to follow player
         updateCamera();
+        
+        // Update TYPE1 max cap every 15 seconds
+        if (System.currentTimeMillis() - lastCapUpdate > 15000) {
+            type1MaxCap = 1 + random.nextInt(6); // Random 1-6
+            lastCapUpdate = System.currentTimeMillis();
+            System.out.println("TYPE1 max cap updated: " + type1MaxCap);
+        }
         
         // Check for Boss spawn at 3.5 minutes
         long elapsedTime = System.currentTimeMillis() - gameStartTime;
@@ -433,8 +452,14 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
             }
         }
         
-        // Auto-shoot
-        if (System.currentTimeMillis() - player.getLastShotTime() > player.getFireRate()) {
+        // Auto-shoot (adjusted for manual mode)
+        long currentFireRate = player.getFireRate();
+        if (manualControlMode) {
+            // 1.5x faster in manual mode
+            currentFireRate = (long) (currentFireRate / 1.5);
+        }
+        
+        if (System.currentTimeMillis() - player.getLastShotTime() > currentFireRate) {
             shootBullet();
             player.setLastShotTime(System.currentTimeMillis());
             System.out.println("Bullet fired! Total bullets: " + bullets.size());
@@ -477,15 +502,55 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
     }
     
     private void updatePlayerMovement() {
-        int dirX = 0, dirY = 0;
-        if (leftPressed) dirX = -1;
-        else if (rightPressed) dirX = 1;
+        if (manualControlMode) {
+            // Manual mode: WASD = movement, Arrow keys = rotation
+            int dirX = 0, dirY = 0;
+            if (leftPressed) dirX = -1;
+            else if (rightPressed) dirX = 1;
 
-        if (upPressed) dirY = -1;
-        else if (downPressed) dirY = 1;
+            if (upPressed) dirY = -1;
+            else if (downPressed) dirY = 1;
 
-        // Inform player of input direction; actual movement integrated in Player.integrateMovement
-        player.move(dirX, dirY, WORLD_WIDTH, WORLD_HEIGHT);
+            // Inform player of input direction
+            player.move(dirX, dirY, WORLD_WIDTH, WORLD_HEIGHT);
+            
+            // Arrow keys control rotation manually
+            if (arrowLeftPressed || arrowRightPressed || arrowUpPressed || arrowDownPressed) {
+                double targetAngle = player.getFacingAngle();
+                
+                // Calculate target angle from arrow keys
+                if (arrowUpPressed && !arrowDownPressed && !arrowLeftPressed && !arrowRightPressed) {
+                    targetAngle = -Math.PI / 2; // Up
+                } else if (arrowDownPressed && !arrowUpPressed && !arrowLeftPressed && !arrowRightPressed) {
+                    targetAngle = Math.PI / 2; // Down
+                } else if (arrowLeftPressed && !arrowRightPressed && !arrowUpPressed && !arrowDownPressed) {
+                    targetAngle = Math.PI; // Left
+                } else if (arrowRightPressed && !arrowLeftPressed && !arrowUpPressed && !arrowDownPressed) {
+                    targetAngle = 0; // Right
+                } else if (arrowUpPressed && arrowRightPressed) {
+                    targetAngle = -Math.PI / 4; // Up-Right
+                } else if (arrowUpPressed && arrowLeftPressed) {
+                    targetAngle = -3 * Math.PI / 4; // Up-Left
+                } else if (arrowDownPressed && arrowRightPressed) {
+                    targetAngle = Math.PI / 4; // Down-Right
+                } else if (arrowDownPressed && arrowLeftPressed) {
+                    targetAngle = 3 * Math.PI / 4; // Down-Left
+                }
+                
+                player.setFacingAngle(targetAngle);
+            }
+        } else {
+            // Auto mode: WASD/Arrows = movement, auto-aim at enemies
+            int dirX = 0, dirY = 0;
+            if (leftPressed) dirX = -1;
+            else if (rightPressed) dirX = 1;
+
+            if (upPressed) dirY = -1;
+            else if (downPressed) dirY = 1;
+
+            // Inform player of input direction; actual movement integrated in Player.integrateMovement
+            player.move(dirX, dirY, WORLD_WIDTH, WORLD_HEIGHT);
+        }
     }
     
     private void spawnEnemy() {
@@ -514,14 +579,22 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         
         // Make sure enemy is within world bounds
         if (x >= 0 && x < WORLD_WIDTH && y >= 0 && y < WORLD_HEIGHT) {
-            // Weighted random: TYPE1 and TYPE3 are common (40% each), TYPE2 is rare (20%)
+            // Count current TYPE1 enemies
+            int type1Count = 0;
+            for (Enemy e : enemies) {
+                if (e.getType() == Enemy.EnemyType.TYPE1) {
+                    type1Count++;
+                }
+            }
+            
+            // Weighted random: TYPE1 rare (5%), TYPE3 common (80%), TYPE2 (15%)
             int roll = random.nextInt(100);
             Enemy.EnemyType type;
-            if (roll < 40) {
+            if (roll < 5 && type1Count < type1MaxCap) { // 5% chance and cap not reached
                 type = Enemy.EnemyType.TYPE1;
-            } else if (roll < 60) {
+            } else if (roll < 20) { // 15% TYPE2
                 type = Enemy.EnemyType.TYPE2;
-            } else {
+            } else { // 80% TYPE3
                 type = Enemy.EnemyType.TYPE3;
             }
             // Use player's visible sprite size (player draws at 2x hitbox)
@@ -529,7 +602,7 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
             int playerSpriteH = player.getHeight() * 2;
             Enemy spawned = new Enemy(x, y, type, playerSpriteW, playerSpriteH);
             enemies.add(spawned);
-            System.out.println("Spawned enemy type=" + type + " size=" + spawned.getWidth() + "x" + spawned.getHeight());
+            System.out.println("Spawned enemy type=" + type + " size=" + spawned.getWidth() + "x" + spawned.getHeight() + " (TYPE1 count: " + (type == Enemy.EnemyType.TYPE1 ? type1Count + 1 : type1Count) + "/" + type1MaxCap + ")");
         }
     }
     
@@ -569,29 +642,38 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
     }
     
     private void shootBullet() {
-        if (!enemies.isEmpty()) {
-            // Find nearest enemy
-            Enemy nearestEnemy = null;
-            double nearestDistance = Double.MAX_VALUE;
-            
-            for (Enemy enemy : enemies) {
-                double distance = Math.sqrt(Math.pow(enemy.getX() - player.getX(), 2) + 
-                                         Math.pow(enemy.getY() - player.getY(), 2));
-                if (distance < nearestDistance) {
-                    nearestDistance = distance;
-                    nearestEnemy = enemy;
+        if (manualControlMode) {
+            // Manual mode: shoot in facing direction with 1.5x damage
+            double fireAngle = player.getFacingAngle();
+            double fireSpeed = 10.0;
+            double damageMultiplier = 1.5;
+            bullets.add(new Bullet(player.getX(), player.getY(), fireAngle, fireSpeed, damageMultiplier));
+        } else {
+            // Auto mode: aim at nearest enemy
+            if (!enemies.isEmpty()) {
+                // Find nearest enemy
+                Enemy nearestEnemy = null;
+                double nearestDistance = Double.MAX_VALUE;
+                
+                for (Enemy enemy : enemies) {
+                    double distance = Math.sqrt(Math.pow(enemy.getX() - player.getX(), 2) + 
+                                             Math.pow(enemy.getY() - player.getY(), 2));
+                    if (distance < nearestDistance) {
+                        nearestDistance = distance;
+                        nearestEnemy = enemy;
+                    }
                 }
-            }
-            
-            if (nearestEnemy != null) {
-                // Compute desired angle and set as player's target facing
-                double desiredAngle = Math.atan2(nearestEnemy.getY() - player.getY(), nearestEnemy.getX() - player.getX());
-                player.setFacingAngle(desiredAngle);
+                
+                if (nearestEnemy != null) {
+                    // Compute desired angle and set as player's target facing
+                    double desiredAngle = Math.atan2(nearestEnemy.getY() - player.getY(), nearestEnemy.getX() - player.getX());
+                    player.setFacingAngle(desiredAngle);
 
-                // Fire using current facingAngle (so rotation affects aim over time)
-                double fireAngle = player.getFacingAngle();
-                double fireSpeed = 10.0; // same as previous default
-                bullets.add(new Bullet(player.getX(), player.getY(), fireAngle, fireSpeed));
+                    // Fire using current facingAngle (so rotation affects aim over time)
+                    double fireAngle = player.getFacingAngle();
+                    double fireSpeed = 10.0; // same as previous default
+                    bullets.add(new Bullet(player.getX(), player.getY(), fireAngle, fireSpeed));
+                }
             }
         }
     }
@@ -702,6 +784,60 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                     drawGameOver(g2d);
                 }
                 break;
+            
+            case PAUSED:
+                // Draw game in background (frozen)
+                if (gameRunning || !gameRunning) { // Draw regardless
+                    AffineTransform old = g2d.getTransform();
+                    g2d.translate(-cameraX, -cameraY);
+                    
+                    // Draw stars background
+                    drawStars(g2d);
+                    
+                    // Draw game objects in world space
+                    player.draw(g2d);
+                    
+                    for (Enemy enemy : enemies) {
+                        enemy.draw(g2d);
+                    }
+                    
+                    for (Bullet bullet : bullets) {
+                        bullet.draw(g2d);
+                    }
+                    
+                    for (EnemyBullet enemyBullet : enemyBullets) {
+                        enemyBullet.draw(g2d);
+                    }
+                    
+                    for (PowerUp powerUp : powerUps) {
+                        powerUp.draw(g2d);
+                    }
+                    
+                    // Draw Boss
+                    if (boss != null && !boss.isDead()) {
+                        boss.draw(g2d);
+                    }
+                    
+                    // Draw damage popups
+                    for (DamagePopup popup : damagePopups) {
+                        popup.draw(g2d);
+                    }
+                    
+                    // Draw explosion particles
+                    for (ExplosionParticle particle : explosionParticles) {
+                        particle.draw(g2d);
+                    }
+                    
+                    g2d.setTransform(old);
+                }
+                
+                // Draw dark overlay
+                g2d.setColor(new Color(0, 0, 0, 150));
+                g2d.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+                
+                // Draw pause menu
+                drawPauseMenu(g2d);
+                break;
         }
     }
     
@@ -786,6 +922,21 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         g2d.setFont(new Font("Arial", Font.PLAIN, 14));
         g2d.setColor(remaining > 0 ? Color.GRAY : Color.GREEN);
         g2d.drawString("Special (F): " + (remaining > 0 ? (cooldownSeconds + "s") : "Ready"), 10, 115);
+        
+        // Manual mode indicator
+        if (manualControlMode) {
+            g2d.setColor(Color.YELLOW);
+            g2d.setFont(new Font("Arial", Font.BOLD, 16));
+            g2d.drawString("MANUAL MODE", 10, 140);
+            g2d.setFont(new Font("Arial", Font.PLAIN, 12));
+            g2d.setColor(Color.ORANGE);
+            g2d.drawString("WASD: Move | Arrows: Aim", 10, 155);
+            g2d.drawString("Damage x1.5 | Fire Rate x1.5", 10, 170);
+        } else {
+            g2d.setColor(Color.CYAN);
+            g2d.setFont(new Font("Arial", Font.PLAIN, 12));
+            g2d.drawString("Press M for Manual Mode", 10, 140);
+        }
     }
     
     private void drawMainMenu(Graphics2D g2d) {
@@ -891,6 +1042,35 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         g2d.setColor(Color.GRAY);
         g2d.setFont(new Font("Arial", Font.PLAIN, 14));
         g2d.drawString("Use ↑↓ to navigate, ENTER to confirm, ESC to cancel", 10, SCREEN_HEIGHT - 20);
+    }
+    
+    private void drawPauseMenu(Graphics2D g2d) {
+        // Draw title
+        g2d.setColor(Color.CYAN);
+        g2d.setFont(new Font("Arial", Font.BOLD, 48));
+        FontMetrics titleFm = g2d.getFontMetrics();
+        String title = "PAUSED";
+        int titleX = (SCREEN_WIDTH - titleFm.stringWidth(title)) / 2;
+        g2d.drawString(title, titleX, SCREEN_HEIGHT / 2 - 100);
+        
+        // Draw options
+        g2d.setFont(new Font("Arial", Font.BOLD, 24));
+        FontMetrics optionsFm = g2d.getFontMetrics();
+        
+        for (int i = 0; i < pauseMenuOptions.length; i++) {
+            if (i == selectedMenuOption) {
+                g2d.setColor(Color.YELLOW);
+                g2d.drawString("> " + pauseMenuOptions[i] + " <", (SCREEN_WIDTH - optionsFm.stringWidth("> " + pauseMenuOptions[i] + " <")) / 2, SCREEN_HEIGHT / 2 + i * 50);
+            } else {
+                g2d.setColor(Color.WHITE);
+                g2d.drawString(pauseMenuOptions[i], (SCREEN_WIDTH - optionsFm.stringWidth(pauseMenuOptions[i])) / 2, SCREEN_HEIGHT / 2 + i * 50);
+            }
+        }
+        
+        // Draw controls
+        g2d.setColor(Color.GRAY);
+        g2d.setFont(new Font("Arial", Font.PLAIN, 14));
+        g2d.drawString("Use ↑↓ to navigate, ENTER to select, ESC to resume", 10, SCREEN_HEIGHT - 20);
     }
     
     private void drawGameOver(Graphics2D g2d) {
@@ -1002,6 +1182,9 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
             case GAME:
                 handleGameInput(key);
                 break;
+            case PAUSED:
+                handlePausedInput(key);
+                break;
         }
     }
     
@@ -1075,14 +1258,26 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                     toggleFullscreen(fullscreen);
                     refreshOptionsItems();
                     break;
-                case 2: // Back to Menu
-                    currentState = GameState.MENU;
-                    selectedMenuOption = 0;
+                case 2: // Back
+                    // Check if we came from pause menu
+                    if (lastStateBeforeExitConfirm == GameState.PAUSED) {
+                        currentState = GameState.PAUSED;
+                        selectedMenuOption = 0;
+                    } else {
+                        currentState = GameState.MENU;
+                        selectedMenuOption = 0;
+                    }
                     break;
             }
         } else if (key == KeyEvent.VK_ESCAPE) {
-            currentState = GameState.MENU;
-            selectedMenuOption = 0;
+            // Return to previous state
+            if (lastStateBeforeExitConfirm == GameState.PAUSED) {
+                currentState = GameState.PAUSED;
+                selectedMenuOption = 0;
+            } else {
+                currentState = GameState.MENU;
+                selectedMenuOption = 0;
+            }
         }
     }
     
@@ -1109,10 +1304,55 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
     }
     
     private void handleGameInput(int key) {
-        if (key == KeyEvent.VK_W || key == KeyEvent.VK_UP) upPressed = true;
-        if (key == KeyEvent.VK_S || key == KeyEvent.VK_DOWN) downPressed = true;
-        if (key == KeyEvent.VK_A || key == KeyEvent.VK_LEFT) leftPressed = true;
-        if (key == KeyEvent.VK_D || key == KeyEvent.VK_RIGHT) rightPressed = true;
+        // If game over, ESC should go to menu, not pause
+        if (key == KeyEvent.VK_ESCAPE) {
+            if (!gameRunning) {
+                // Game over - return to main menu
+                currentState = GameState.MENU;
+                selectedMenuOption = 0;
+                return;
+            } else {
+                // Game running - pause game
+                currentState = GameState.PAUSED;
+                selectedMenuOption = 0; // Default to "Resume"
+                return;
+            }
+        }
+        
+        // P key only pauses if game is running
+        if (key == KeyEvent.VK_P && gameRunning) {
+            currentState = GameState.PAUSED;
+            selectedMenuOption = 0; // Default to "Resume"
+            return;
+        }
+        
+        // M key toggles manual control mode
+        if (key == KeyEvent.VK_M) {
+            manualControlMode = !manualControlMode;
+            System.out.println("Manual control mode: " + (manualControlMode ? "ON" : "OFF"));
+            return;
+        }
+        
+        // Handle movement keys based on mode
+        if (manualControlMode) {
+            // Manual mode: WASD = movement only
+            if (key == KeyEvent.VK_W) upPressed = true;
+            if (key == KeyEvent.VK_S) downPressed = true;
+            if (key == KeyEvent.VK_A) leftPressed = true;
+            if (key == KeyEvent.VK_D) rightPressed = true;
+            
+            // Arrow keys = aiming/rotation
+            if (key == KeyEvent.VK_UP) arrowUpPressed = true;
+            if (key == KeyEvent.VK_DOWN) arrowDownPressed = true;
+            if (key == KeyEvent.VK_LEFT) arrowLeftPressed = true;
+            if (key == KeyEvent.VK_RIGHT) arrowRightPressed = true;
+        } else {
+            // Auto mode: both WASD and arrows can move
+            if (key == KeyEvent.VK_W || key == KeyEvent.VK_UP) upPressed = true;
+            if (key == KeyEvent.VK_S || key == KeyEvent.VK_DOWN) downPressed = true;
+            if (key == KeyEvent.VK_A || key == KeyEvent.VK_LEFT) leftPressed = true;
+            if (key == KeyEvent.VK_D || key == KeyEvent.VK_RIGHT) rightPressed = true;
+        }
         
         if (key == KeyEvent.VK_F) {
             // activate special ability (if player exists)
@@ -1121,14 +1361,45 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
 
         if (key == KeyEvent.VK_R && !gameRunning) {
             restartGame();
-        } else if (key == KeyEvent.VK_ESCAPE) {
-            // Pause and confirm exit
-            lastStateBeforeExitConfirm = currentState;
-            currentState = GameState.EXIT_CONFIRM;
-            selectedMenuOption = 1; // default No
-            gameRunning = false;
         }
     }
+    
+    private void handlePausedInput(int key) {
+        if (key == KeyEvent.VK_UP) {
+            selectedMenuOption = (selectedMenuOption - 1 + pauseMenuOptions.length) % pauseMenuOptions.length;
+        } else if (key == KeyEvent.VK_DOWN) {
+            selectedMenuOption = (selectedMenuOption + 1) % pauseMenuOptions.length;
+        } else if (key == KeyEvent.VK_ENTER) {
+            switch (selectedMenuOption) {
+                case 0: // Resume
+                    currentState = GameState.GAME;
+                    break;
+                case 1: // Settings
+                    lastStateBeforeExitConfirm = GameState.PAUSED; // Track that we came from pause
+                    currentState = GameState.OPTIONS;
+                    selectedOptionsItem = 0;
+                    break;
+                case 2: // Return to Main Menu
+                    currentState = GameState.MENU;
+                    selectedMenuOption = 0;
+                    gameRunning = false;
+                    // Reset game state
+                    enemies = new ArrayList<>();
+                    bullets = new ArrayList<>();
+                    enemyBullets = new ArrayList<>();
+                    damagePopups = new ArrayList<>();
+                    explosionParticles = new ArrayList<>();
+                    boss = null;
+                    bossSpawned = false;
+                    player = null;
+                    break;
+            }
+        } else if (key == KeyEvent.VK_ESCAPE || key == KeyEvent.VK_P) {
+            // Resume game
+            currentState = GameState.GAME;
+        }
+    }
+
     
     private void startNewGame() {
         currentState = GameState.GAME;
@@ -1139,6 +1410,7 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         enemySpawnRate = 1000;
         gameStartTime = System.currentTimeMillis();
         lastEnemySpawn = System.currentTimeMillis();
+        lastUpdateTimeMillis = System.currentTimeMillis();
         
         // Create player with selected spacecraft stats
         int hp = spacecraftStats[0][selectedSpacecraft];
@@ -1146,30 +1418,61 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         int firerate = spacecraftStats[2][selectedSpacecraft];
         player = new Player(WORLD_WIDTH / 2, WORLD_HEIGHT / 2, selectedSpacecraft, hp, speed, firerate);
         
-        // Clear all game objects
-        enemies.clear();
-        bullets.clear();
-        enemyBullets.clear();
-        powerUps.clear();
+        // Clear/reset all game objects
+        enemies = new ArrayList<>();
+        bullets = new ArrayList<>();
+        enemyBullets = new ArrayList<>();
+        powerUps = new ArrayList<>();
+        damagePopups = new ArrayList<>();
+        explosionParticles = new ArrayList<>();
+        boss = null;
+        bossSpawned = false;
+        type1MaxCap = 1 + random.nextInt(6);
+        lastCapUpdate = System.currentTimeMillis();
+        
+        // Reset camera
+        cameraX = 0;
+        cameraY = 0;
+        
+        // Reset manual mode
+        manualControlMode = false;
     }
     
     @Override
     public void keyReleased(KeyEvent e) {
         int key = e.getKeyCode();
         
-        if (key == KeyEvent.VK_W || key == KeyEvent.VK_UP) upPressed = false;
-        if (key == KeyEvent.VK_S || key == KeyEvent.VK_DOWN) downPressed = false;
-        if (key == KeyEvent.VK_A || key == KeyEvent.VK_LEFT) leftPressed = false;
-        if (key == KeyEvent.VK_D || key == KeyEvent.VK_RIGHT) rightPressed = false;
+        // Release movement keys
+        if (key == KeyEvent.VK_W) upPressed = false;
+        if (key == KeyEvent.VK_S) downPressed = false;
+        if (key == KeyEvent.VK_A) leftPressed = false;
+        if (key == KeyEvent.VK_D) rightPressed = false;
+        
+        // Release arrow keys (used for movement in auto mode, rotation in manual mode)
+        if (key == KeyEvent.VK_UP) {
+            upPressed = false;
+            arrowUpPressed = false;
+        }
+        if (key == KeyEvent.VK_DOWN) {
+            downPressed = false;
+            arrowDownPressed = false;
+        }
+        if (key == KeyEvent.VK_LEFT) {
+            leftPressed = false;
+            arrowLeftPressed = false;
+        }
+        if (key == KeyEvent.VK_RIGHT) {
+            rightPressed = false;
+            arrowRightPressed = false;
+        }
     }
     
     @Override
     public void keyTyped(KeyEvent e) {}
     
     private void restartGame() {
-        timer.stop();
-        initializeGame();
-        timer.start();
+        // Simply call startNewGame which already handles everything properly
+        startNewGame();
     }
 
     private void toggleFullscreen(boolean enable) {

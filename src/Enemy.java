@@ -38,8 +38,8 @@ public class Enemy {
             case TYPE1:
                 this.width = 30;
                 this.height = 30;
-                this.health = 50;
-                this.maxHealth = 50;
+                this.health = 1;  // 1 hit to kill
+                this.maxHealth = 1;
                 this.speed = 1.5;
                 this.color = Color.RED;
                 this.fireRate = 3000; // 3 seconds (not used for laser, laser has own timing)
@@ -58,8 +58,8 @@ public class Enemy {
             case TYPE3:
                 this.width = 30;
                 this.height = 30;
-                this.health = 50;
-                this.maxHealth = 50;
+                this.health = 1;  // 1 hit to kill
+                this.maxHealth = 1;
                 this.speed = 1.5;
                 this.color = Color.ORANGE;
                 this.fireRate = 3000; // 3 seconds
@@ -83,8 +83,8 @@ public class Enemy {
             case TYPE1:
                 this.width = playerWidth;
                 this.height = playerHeight;
-                this.health = 50;
-                this.maxHealth = 50;
+                this.health = 1;  // 1 hit to kill
+                this.maxHealth = 1;
                 this.speed = 1.5;
                 this.color = Color.RED;
                 this.fireRate = 3000; // 3 seconds
@@ -103,8 +103,8 @@ public class Enemy {
             case TYPE3:
                 this.width = playerWidth;
                 this.height = playerHeight;
-                this.health = 50;
-                this.maxHealth = 50;
+                this.health = 1;  // 1 hit to kill
+                this.maxHealth = 1;
                 this.speed = 1.5;
                 this.color = Color.ORANGE;
                 this.fireRate = 3000; // 3 seconds
@@ -168,9 +168,9 @@ public class Enemy {
             y += (dy / distance) * speed;
         }
         
-        // TYPE1: update laser if active
+        // TYPE1: update laser if active (pass player position for tracking)
         if (type == EnemyType.TYPE1 && activeLaser != null) {
-            activeLaser.update(getX(), getY());
+            activeLaser.update(getX(), getY(), playerX, playerY);
             if (activeLaser.isFinished()) {
                 activeLaser = null; // Remove finished laser
             }

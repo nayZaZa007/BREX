@@ -252,18 +252,30 @@ public class Player {
                 shieldMax = Math.max(1, maxHealth / 2);
                 shieldCurrent = shieldMax;
                 break;
-            case 1: // Medium: double fire rate for duration
+            case 1: // Medium: double fire rate for 10 seconds (CD 18s from activation)
                 if (!doubleFireActive) {
                     fireRateBackup = fireRate;
                     // halve the delay (double shots) - fireRate stored as ms between shots
                     fireRate = Math.max(50, fireRate / 2);
                     doubleFireActive = true;
-                    doubleFireEndTime = now + 18000; // 18s
+                    doubleFireEndTime = now + 10000; // Active for 10 seconds
                 }
                 break;
-            case 2: // Small: teleport forward in facing direction
-                double dirX = Math.cos(facingAngle);
-                double dirY = Math.sin(facingAngle);
+            case 2: // Small: teleport in movement direction (not facing direction)
+                // Use velocity direction if moving, otherwise use facing direction
+                double dirX, dirY;
+                double velocityMagnitude = Math.sqrt(vx * vx + vy * vy);
+                
+                if (velocityMagnitude > 1.0) {
+                    // Moving - use velocity direction
+                    dirX = vx / velocityMagnitude;
+                    dirY = vy / velocityMagnitude;
+                } else {
+                    // Not moving - use facing direction as fallback
+                    dirX = Math.cos(facingAngle);
+                    dirY = Math.sin(facingAngle);
+                }
+                
                 double nx = x + dirX * teleportDistance;
                 double ny = y + dirY * teleportDistance;
                 // Clamp to world

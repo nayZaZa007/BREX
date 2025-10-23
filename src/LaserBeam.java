@@ -39,9 +39,14 @@ public class LaserBeam {
         this.damage = 20 + (int)(Math.random() * 11); // 20-30
     }
     
-    public void update(double enemyX, double enemyY) {
+    public void update(double enemyX, double enemyY, double playerX, double playerY) {
         this.startX = enemyX;
         this.startY = enemyY;
+        
+        // Update angle to track player during CHARGING phase
+        if (state == LaserState.CHARGING) {
+            this.angle = Math.atan2(playerY - enemyY, playerX - enemyX);
+        }
         
         long now = System.currentTimeMillis();
         long elapsed = now - stateStartTime;
@@ -120,11 +125,17 @@ public class LaserBeam {
     }
     
     public boolean shouldDealDamage() {
-        return state == LaserState.FIRING;
+        // Only deal damage during FIRING state
+        if (state == LaserState.FIRING) {
+            // Mark that damage was dealt, so it only happens once per firing
+            state = LaserState.CHARGING; // Prevent multiple hits
+            return true;
+        }
+        return false;
     }
     
     public boolean hitsPlayer(Player player) {
-        if (state != LaserState.FIRING) return false;
+        if (!shouldDealDamage()) return false;
         
         // Check if player is on the laser line
         // Use point-to-line distance
