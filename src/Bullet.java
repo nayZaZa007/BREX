@@ -11,6 +11,7 @@ public class Bullet {
     private long creationTime;
     private static final long BULLET_LIFETIME = 60000; // 1 minute in milliseconds
     private int damage; // Random damage
+    private Color color = Color.YELLOW; // Default color (can be changed)
     
     public Bullet(int startX, int startY, int targetX, int targetY) {
         this.x = startX;
@@ -75,7 +76,7 @@ public class Bullet {
         g2d.translate(x, y);
         g2d.rotate(angle);
 
-        g2d.setColor(Color.YELLOW);
+        g2d.setColor(color); // Use custom color
         g2d.fillRect(0, -h/2, len, h);
         g2d.setColor(Color.WHITE);
         g2d.drawRect(0, -h/2, len, h);
@@ -111,4 +112,7 @@ public class Bullet {
     public int getWidth() { return width; }
     public int getHeight() { return height; }
     public int getDamage() { return damage; }
+    
+    // Setter for color
+    public void setColor(Color color) { this.color = color; }
 }

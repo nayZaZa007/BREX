@@ -383,6 +383,8 @@ public class Player {
     public int getSpeed() { return speed; }
     public long getLastShotTime() { return lastShotTime; }
     public int getFireRate() { return fireRate; }
+    public int getSpacecraftType() { return spacecraftType; }
+    public int getFireRateRPM() { return (int)(60000.0 / fireRate); } // Convert ms to shots/min
     
     // Setters
     public void setLastShotTime(long time) { this.lastShotTime = time; }

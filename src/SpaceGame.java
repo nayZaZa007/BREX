@@ -25,6 +25,9 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
     
     private Timer timer;
     private Player player;
+    private Player player2; // Co-op mode player 2
+    private boolean coopMode = false; // Co-op mode active
+    private ArrayList<Bullet> bullets2; // Player 2 bullets
     private ArrayList<Enemy> enemies;
     private ArrayList<Bullet> bullets;
     private ArrayList<EnemyBullet> enemyBullets;
@@ -43,7 +46,27 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
     // Boss
     private Boss boss;
     private boolean bossSpawned = false;
-    private static final long BOSS_SPAWN_TIME = 210000; // 3.5 minutes in milliseconds
+    private static final long BOSS_SPAWN_TIME = 2100; // 3.5 minutes in milliseconds
+    
+    // Boss attack system
+    private ArrayList<BossBullet> bossBullets = new ArrayList<>();
+    private ArrayList<BossLaser> bossLasers = new ArrayList<>();
+    private boolean bossLasersCreated = false;
+    private double laserRotationDirection = 1.0; // 1.0 = clockwise, -1.0 = counter-clockwise
+    private long lastHomingBulletSpawn = 0; // เวลาที่ spawn homing bullet ครั้งล่าสุด
+    private static final long HOMING_SPAWN_INTERVAL = 2000; // spawn ทุก 2 วินาที
+    
+    // Boss damage cooldowns
+    private long lastBossCollisionDamage = 0;
+    private long lastBossLaserDamage = 0;
+    private static final long BOSS_DAMAGE_COOLDOWN = 500; // 0.5 วินาที
+    
+    // Boss death animation
+    private boolean bossDeathAnimationActive = false;
+    private long bossDeathStartTime = 0;
+    private static final long BOSS_DEATH_DURATION = 8000; // 8 seconds
+    private int bossFinalX, bossFinalY; // Store boss position when it dies
+    private float bossDeathAlpha = 1.0f; // For fading boss sprite
     
     // TYPE1 enemy spawn cap
     private int type1MaxCap = 1; // Random 1-6
@@ -95,6 +118,10 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
     // Manual control mode
     private boolean manualControlMode = false;
     private boolean arrowUpPressed, arrowDownPressed, arrowLeftPressed, arrowRightPressed;
+    
+    // Special ability keys
+    private boolean fPressed = false; // F key for player1 special
+    private boolean rightShiftPressed = false; // Right Shift for player2 special
     
     public SpaceGame() {
         this.setPreferredSize(new Dimension(SCREEN_WIDTH, SCREEN_HEIGHT));
@@ -156,6 +183,8 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
     
     private void initializeGame() {
         player = new Player(WORLD_WIDTH / 2, WORLD_HEIGHT / 2);
+        player2 = null; // Co-op player starts as null
+        bullets2 = new ArrayList<>(); // Initialize bullets2 list
         enemies = new ArrayList<>();
         bullets = new ArrayList<>();
         enemyBullets = new ArrayList<>();
@@ -240,6 +269,14 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
     player.update(delta);
     // update any timed special effects (double-fire expiration, etc.)
     player.updateSpecials();
+    
+    // Update player2 if co-op mode active
+    if (coopMode && player2 != null) {
+        updatePlayer2Movement();
+        player2.integrateMovement(delta, WORLD_WIDTH, WORLD_HEIGHT);
+        player2.update(delta);
+        player2.updateSpecials();
+    }
         
         // Update camera to follow player
         updateCamera();
@@ -287,6 +324,11 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                 if (player.getHealth() <= 0) {
                     System.out.println("Game Over! Final Score: " + score);
                     gameRunning = false;
+                    // ลบ Player2 ออกเมื่อ Game Over
+                    if (coopMode && player2 != null) {
+                        player2 = null;
+                        coopMode = false;
+                    }
                 }
             }
             
@@ -347,11 +389,79 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                 
                 if (boss.isDead()) {
                     System.out.println("=== BOSS DEFEATED ===");
-                    // Create explosion particles
-                    for (int i = 0; i < 50; i++) {
-                        explosionParticles.add(new ExplosionParticle(boss.getX(), boss.getY()));
+                    // Deactivate all boss lasers
+                    for (BossLaser laser : bossLasers) {
+                        laser.deactivate();
+                    }
+                    // Start boss death animation
+                    if (!bossDeathAnimationActive) {
+                        bossDeathAnimationActive = true;
+                        bossDeathStartTime = System.currentTimeMillis();
+                        bossFinalX = (int) boss.getX();
+                        bossFinalY = (int) boss.getY();
                     }
                     score += 500;
+                }
+            }
+        }
+        
+        // Update player2 bullets (co-op mode)
+        if (coopMode && player2 != null) {
+            Iterator<Bullet> bullet2Iterator = bullets2.iterator();
+            while (bullet2Iterator.hasNext()) {
+                Bullet bullet = bullet2Iterator.next();
+                bullet.update();
+                
+                // Remove if expired
+                if (bullet.isExpired()) {
+                    bullet2Iterator.remove();
+                    continue;
+                }
+                
+                // Check bullet-enemy collision
+                Iterator<Enemy> enemyIterator3 = enemies.iterator();
+                while (enemyIterator3.hasNext()) {
+                    Enemy enemy = enemyIterator3.next();
+                    if (bullet.collidesWith(enemy)) {
+                        int dmg = bullet.getDamage();
+                        enemy.takeDamage(dmg);
+                        damagePopups.add(new DamagePopup(enemy.getX(), enemy.getY(), dmg, new Color(255, 105, 180)));
+                        bullet2Iterator.remove();
+                        
+                        if (enemy.isDead()) {
+                            enemyIterator3.remove();
+                            score += 10;
+                            
+                            if (random.nextInt(10) == 0) {
+                                powerUps.add(new PowerUp(enemy.getX(), enemy.getY()));
+                            }
+                        }
+                        break;
+                    }
+                }
+                
+                // Check bullet-boss collision
+                if (boss != null && !boss.isDead() && bullet.collidesWith(boss)) {
+                    int dmg = bullet.getDamage();
+                    boss.takeDamage(dmg);
+                    damagePopups.add(new DamagePopup((int)boss.getX(), (int)boss.getY(), dmg, new Color(255, 105, 180)));
+                    bullet2Iterator.remove();
+                    
+                    if (boss.isDead()) {
+                        System.out.println("=== BOSS DEFEATED (by Player2) ===");
+                        // Deactivate all boss lasers
+                        for (BossLaser laser : bossLasers) {
+                            laser.deactivate();
+                        }
+                        // Start boss death animation
+                        if (!bossDeathAnimationActive) {
+                            bossDeathAnimationActive = true;
+                            bossDeathStartTime = System.currentTimeMillis();
+                            bossFinalX = (int) boss.getX();
+                            bossFinalY = (int) boss.getY();
+                        }
+                        score += 500;
+                    }
                 }
             }
         }
@@ -380,7 +490,32 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                 if (player.getHealth() <= 0) {
                     System.out.println("Game Over! Final Score: " + score);
                     gameRunning = false;
+                    // ลบ Player2 ออกเมื่อ Game Over
+                    if (coopMode && player2 != null) {
+                        player2 = null;
+                        coopMode = false;
+                    }
                 }
+                continue;
+            }
+            
+            // Check collision with player2 (co-op mode) - ใช้เลือดร่วมกับ Player1
+            if (coopMode && player2 != null && enemyBullet.collidesWith(player2)) {
+                int dmg = enemyBullet.getDamage();
+                player.consumeDamage(dmg); // หัก HP จาก Player1 (ใช้เลือดร่วมกัน)
+                damagePopups.add(new DamagePopup(player2.getX(), player2.getY(), dmg, Color.RED));
+                enemyBulletIterator.remove();
+                System.out.println("Player2 hit by bullet! Shared Health: " + player.getHealth() + " (damage: " + dmg + ")");
+                
+                if (player.getHealth() <= 0) {
+                    // เลือดหมด = Game Over
+                    System.out.println("Game Over! Final Score: " + score);
+                    gameRunning = false;
+                    // ลบ Player2 ออก
+                    player2 = null;
+                    coopMode = false;
+                }
+                continue;
             }
         }
         
@@ -388,28 +523,90 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         if (boss != null && !boss.isDead()) {
             boss.update(player, delta);
             
-            // Boss shooting
-            long currentTime = System.currentTimeMillis();
-            if (currentTime - boss.getLastShotTime() > boss.getFireRate()) {
-                // Boss fires bullets at player
-                int bx = (int)boss.getX();
-                int by = (int)boss.getY();
-                int px = player.getX();
-                int py = player.getY();
-                enemyBullets.add(new EnemyBullet(bx, by, px, py));
-                boss.setLastShotTime(currentTime);
-                System.out.println("Boss fired bullet!");
+            // Boss attack phase system
+            handleBossAttacks(delta);
+            
+            // Boss enemy spawn system (5-10 enemies, cooldown 10-15s)
+            if (boss.shouldSpawnEnemies()) {
+                spawnBossEnemies();
             }
             
-            // Boss collision with player
+            // Boss collision with player (10-20 damage per 0.5s)
             if (boss.collidesWith(player)) {
-                player.consumeDamage(20);
-                damagePopups.add(new DamagePopup(player.getX(), player.getY(), 20, Color.RED));
-                System.out.println("Player hit by Boss! Health: " + player.getHealth());
+                long currentTime = System.currentTimeMillis();
+                if (currentTime - lastBossCollisionDamage >= BOSS_DAMAGE_COOLDOWN) {
+                    int damage = 10 + random.nextInt(11); // 10-20
+                    player.consumeDamage(damage);
+                    damagePopups.add(new DamagePopup(player.getX(), player.getY(), damage, Color.RED)); // สีเดียวกับศัตรู
+                    lastBossCollisionDamage = currentTime;
+                    System.out.println("Player hit by Boss collision! Damage: " + damage + " Health: " + player.getHealth());
+                    
+                    if (player.getHealth() <= 0) {
+                        System.out.println("Game Over! Final Score: " + score);
+                        gameRunning = false;
+                        // ลบ Player2 ออกเมื่อ Game Over
+                        if (coopMode && player2 != null) {
+                            player2 = null;
+                            coopMode = false;
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Update boss bullets
+        Iterator<BossBullet> bossBulletIterator = bossBullets.iterator();
+        while (bossBulletIterator.hasNext()) {
+            BossBullet bullet = bossBulletIterator.next();
+            bullet.update(player);
+            
+            if (bullet.collidesWith(player)) {
+                player.consumeDamage(bullet.getDamage());
+                damagePopups.add(new DamagePopup(player.getX(), player.getY(), bullet.getDamage(), Color.RED)); // สีเดียวกับศัตรู
+                bossBulletIterator.remove();
+                System.out.println("Player hit by boss bullet! Health: " + player.getHealth());
                 
                 if (player.getHealth() <= 0) {
                     System.out.println("Game Over! Final Score: " + score);
                     gameRunning = false;
+                    // ลบ Player2 ออกเมื่อ Game Over
+                    if (coopMode && player2 != null) {
+                        player2 = null;
+                        coopMode = false;
+                    }
+                }
+            } else if (bullet.isOffScreen(WORLD_WIDTH, WORLD_HEIGHT)) {
+                bossBulletIterator.remove();
+            }
+        }
+        
+        // Update boss lasers
+        double dt = delta / 1000.0;
+        for (BossLaser laser : bossLasers) {
+            if (laser.isActive() && boss != null && !boss.isDead()) {
+                laser.updatePosition(boss.getX(), boss.getY());
+                laser.update(dt);
+                
+                // Boss laser damage (17-30 per 0.5s)
+                if (laser.collidesWith(player)) {
+                    long currentTime = System.currentTimeMillis();
+                    if (currentTime - lastBossLaserDamage >= BOSS_DAMAGE_COOLDOWN) {
+                        int damage = 17 + random.nextInt(14); // 17-30
+                        player.consumeDamage(damage);
+                        damagePopups.add(new DamagePopup(player.getX(), player.getY(), damage, Color.RED)); // สีเดียวกับศัตรู
+                        lastBossLaserDamage = currentTime;
+                        System.out.println("Player hit by boss laser! Damage: " + damage + " Health: " + player.getHealth());
+                        
+                        if (player.getHealth() <= 0) {
+                            System.out.println("Game Over! Final Score: " + score);
+                            gameRunning = false;
+                            // ลบ Player2 ออกเมื่อ Game Over
+                            if (coopMode && player2 != null) {
+                                player2 = null;
+                                coopMode = false;
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -427,6 +624,11 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                     if (player.getHealth() <= 0) {
                         System.out.println("Game Over! Final Score: " + score);
                         gameRunning = false;
+                        // ลบ Player2 ออกเมื่อ Game Over
+                        if (coopMode && player2 != null) {
+                            player2 = null;
+                            coopMode = false;
+                        }
                     }
                 }
             }
@@ -452,6 +654,26 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
             }
         }
         
+        // Update boss death animation
+        if (bossDeathAnimationActive) {
+            long elapsed = System.currentTimeMillis() - bossDeathStartTime;
+            
+            // Continuously spawn explosion particles during death animation
+            for (int i = 0; i < 3; i++) { // Spawn 3 particles per frame
+                spawnBossExplosionParticle();
+            }
+            
+            // Fade boss sprite over 8 seconds
+            bossDeathAlpha = Math.max(0f, 1f - ((float)elapsed / (float)BOSS_DEATH_DURATION));
+            
+            // End animation after duration
+            if (elapsed >= BOSS_DEATH_DURATION) {
+                bossDeathAnimationActive = false;
+                boss = null; // Finally remove boss
+            }
+        }
+
+        
         // Auto-shoot (adjusted for manual mode)
         long currentFireRate = player.getFireRate();
         if (manualControlMode) {
@@ -463,6 +685,19 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
             shootBullet();
             player.setLastShotTime(System.currentTimeMillis());
             System.out.println("Bullet fired! Total bullets: " + bullets.size());
+        }
+        
+        // Player2 auto-shoot (if co-op mode active) - ยิงอัตโนมัติเหมือน player1
+        if (coopMode && player2 != null) {
+            long p2FireRate = player2.getFireRate();
+            if (manualControlMode) {
+                p2FireRate = (long) (p2FireRate / 1.5);
+            }
+            
+            if (System.currentTimeMillis() - player2.getLastShotTime() > p2FireRate) {
+                shootBulletPlayer2();
+                player2.setLastShotTime(System.currentTimeMillis());
+            }
         }
         
         // Update power-ups
@@ -505,11 +740,11 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         if (manualControlMode) {
             // Manual mode: WASD = movement, Arrow keys = rotation
             int dirX = 0, dirY = 0;
-            if (leftPressed) dirX = -1;
-            else if (rightPressed) dirX = 1;
+            if (leftPressed) dirX -= 1;
+            if (rightPressed) dirX += 1;
 
-            if (upPressed) dirY = -1;
-            else if (downPressed) dirY = 1;
+            if (upPressed) dirY -= 1;
+            if (downPressed) dirY += 1;
 
             // Inform player of input direction
             player.move(dirX, dirY, WORLD_WIDTH, WORLD_HEIGHT);
@@ -542,14 +777,131 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         } else {
             // Auto mode: WASD/Arrows = movement, auto-aim at enemies
             int dirX = 0, dirY = 0;
-            if (leftPressed) dirX = -1;
-            else if (rightPressed) dirX = 1;
+            if (leftPressed) dirX -= 1;
+            if (rightPressed) dirX += 1;
 
-            if (upPressed) dirY = -1;
-            else if (downPressed) dirY = 1;
+            if (upPressed) dirY -= 1;
+            if (downPressed) dirY += 1;
 
             // Inform player of input direction; actual movement integrated in Player.integrateMovement
             player.move(dirX, dirY, WORLD_WIDTH, WORLD_HEIGHT);
+        }
+    }
+    
+    private void updatePlayer2Movement() {
+        if (player2 == null) return;
+        
+        // Player 2 controlled by arrow keys only (no Shift needed for movement)
+        int dirX = 0, dirY = 0;
+        if (arrowLeftPressed) dirX -= 1;
+        if (arrowRightPressed) dirX += 1;
+
+        if (arrowUpPressed) dirY -= 1;
+        if (arrowDownPressed) dirY += 1;
+
+        // Inform player2 of input direction
+        player2.move(dirX, dirY, WORLD_WIDTH, WORLD_HEIGHT);
+        
+        // Player2 uses same auto-aim as player1 in auto mode
+        // (rotation handled in player.update())
+    }
+    
+    private void handleBossAttacks(long delta) {
+        if (boss == null || boss.isDead()) return;
+        
+        Boss.AttackPhase phase = boss.getCurrentPhase();
+        
+        switch (phase) {
+            case BARRAGE:
+                // Shoot bullets in grid pattern toward player
+                if (boss.getBarrageTimer() >= boss.getBarrageShotInterval()) {
+                    int bx = (int)boss.getX();
+                    int by = (int)boss.getY();
+                    int px = player.getX();
+                    int py = player.getY();
+                    
+                    // Create 3 bullets in a horizontal line
+                    int spacing = 40;
+                    for (int i = -1; i <= 1; i++) {
+                        int offsetX = i * spacing;
+                        bossBullets.add(new BossBullet(
+                            bx + offsetX, by, 
+                            px + offsetX * 2, py, 
+                            15, 
+                            Color.ORANGE
+                        ));
+                    }
+                    
+                    boss.resetBarrageTimer();
+                    boss.incrementBarrageShots();
+                    System.out.println("Boss barrage shot #" + boss.getBarrageShots());
+                }
+                break;
+                
+            case LASER_SPIN:
+                // Create 6 lasers if not yet created
+                if (!bossLasersCreated) {
+                    bossLasers.clear();
+                    for (int i = 0; i < 6; i++) {
+                        double angle = (Math.PI * 2 / 6) * i;
+                        BossLaser laser = new BossLaser(
+                            boss.getX(), boss.getY(),
+                            angle,
+                            3000, // ยาวเท่าแมพ (WORLD_WIDTH)
+                            25,   // damage เพิ่มเป็น 17-30/0.5s (avg ~23.5)
+                            Color.CYAN,
+                            boss.getHitboxRadius() // ใช้ hitbox ของบอส
+                        );
+                        bossLasers.add(laser);
+                    }
+                    
+                    // Random rotation direction
+                    laserRotationDirection = random.nextBoolean() ? 1.0 : -1.0;
+                    System.out.println("Boss lasers created, rotation: " + (laserRotationDirection > 0 ? "clockwise" : "counter-clockwise"));
+                    bossLasersCreated = true;
+                }
+                
+                // Start rotation after 2 second warmup
+                for (BossLaser laser : bossLasers) {
+                    if (laser.isWarmedUp() && !laser.equals(bossLasers.get(0))) {
+                        // Check if rotation already started
+                    }
+                    if (laser.isWarmedUp()) {
+                        double rotationSpeed = laserRotationDirection * Math.toRadians(30); // 30 deg/s
+                        laser.startRotation(rotationSpeed);
+                    }
+                }
+                break;
+                
+            case HOMING:
+                // Fire 3 homing bullets around boss every 2 seconds
+                long currentTime = System.currentTimeMillis();
+                if (currentTime - lastHomingBulletSpawn >= HOMING_SPAWN_INTERVAL) {
+                    // Spawn 3 bullets in circle around boss
+                    for (int i = 0; i < 3; i++) {
+                        double spawnAngle = (Math.PI * 2 / 3) * i; // 120 degrees apart
+                        double spawnDist = 50; // ระยะจากบอส
+                        double spawnX = boss.getX() + Math.cos(spawnAngle) * spawnDist;
+                        double spawnY = boss.getY() + Math.sin(spawnAngle) * spawnDist;
+                        
+                        bossBullets.add(new BossBullet(
+                            spawnX, spawnY,
+                            10, // damage
+                            Color.YELLOW,
+                            true, // isHoming
+                            1    // maxRedirects
+                        ));
+                    }
+                    lastHomingBulletSpawn = currentTime;
+                    System.out.println("Boss fired 3 homing bullets!");
+                }
+                break;
+        }
+        
+        // Clear lasers when not in laser phase
+        if (phase != Boss.AttackPhase.LASER_SPIN && bossLasersCreated) {
+            bossLasers.clear();
+            bossLasersCreated = false;
         }
     }
     
@@ -608,8 +960,100 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
     
     private void spawnBoss() {
         System.out.println("=== BOSS SPAWNED ===");
-        // Spawn boss in the center of the world
-        boss = new Boss(WORLD_WIDTH / 2, WORLD_HEIGHT / 2);
+        // Spawn boss near player
+        int spawnX = (int)(player.getX() + 200 + random.nextDouble() * 300); // ด้านขวา player 200-500 px
+        int spawnY = (int)(player.getY() - 200 + random.nextDouble() * 400); // บนหรือล่าง player ±200 px
+        
+        // จำกัดให้อยู่ในขอบเขตแมพ
+        spawnX = Math.max(100, Math.min(WORLD_WIDTH - 100, spawnX));
+        spawnY = Math.max(100, Math.min(WORLD_HEIGHT - 100, spawnY));
+        
+        boss = new Boss(spawnX, spawnY);
+    }
+    
+    private void toggleCoopMode() {
+        coopMode = !coopMode;
+        
+        if (coopMode) {
+            // เปิด co-op mode: สร้าง player2 ด้านซ้ายของ player1 โดยมีสเตทเท่ากับ player1
+            int p1Type = player.getSpacecraftType();
+            int p1MaxHP = player.getMaxHealth();
+            int p1Speed = player.getSpeed();
+            int p1Firerate = player.getFireRateRPM(); // shots per minute
+            
+            // Player 2 มีสเตทเท่ากับ player 1 ทุกอย่าง
+            int p2HP = p1MaxHP;
+            int p2Speed = p1Speed;
+            int p2Firerate = p1Firerate;
+            
+            // Spawn player2 ห่างจาก player1 50px ทางซ้าย
+            player2 = new Player((int)player.getX() - 50, (int)player.getY(), 
+                                p1Type, p2HP, p2Speed, p2Firerate);
+            
+            System.out.println("Co-op mode: ON (Player 2 created with same stats as Player 1)");
+        } else {
+            // ปิด co-op mode: รวม player2 กลับเข้า player1
+            player2 = null;
+            bullets2.clear();
+            System.out.println("Co-op mode: OFF (Player 2 removed)");
+        }
+    }
+    
+    private void spawnBossExplosionParticle() {
+        // Spawn explosion particles around boss death location (similar to old system)
+        int spread = 60;
+        int px = bossFinalX + random.nextInt(spread) - spread/2;
+        int py = bossFinalY + random.nextInt(spread) - spread/2;
+        
+        explosionParticles.add(new ExplosionParticle(px, py));
+    }
+    
+    private void spawnBossEnemies() {
+        // Spawn 5-10 enemies, รวมทั้งสามประเภท, TYPE1 สูงสุด 2 ตัว
+        int totalEnemies = 5 + random.nextInt(6); // 5-10
+        int type1Count = 0;
+        int maxType1 = 2;
+        
+        System.out.println("Boss spawning " + totalEnemies + " enemies!");
+        
+        for (int i = 0; i < totalEnemies; i++) {
+            // สุ่มประเภท (0=TYPE1, 1=TYPE2, 2=TYPE3)
+            int typeChoice;
+            if (type1Count >= maxType1) {
+                // ถ้า TYPE1 ครบแล้ว สุ่มเฉพาะ TYPE2 หรือ TYPE3
+                typeChoice = 1 + random.nextInt(2); // 1 หรือ 2
+            } else {
+                typeChoice = random.nextInt(3); // 0, 1, หรือ 2
+            }
+            
+            Enemy.EnemyType type;
+            switch (typeChoice) {
+                case 0:
+                    type = Enemy.EnemyType.TYPE1;
+                    type1Count++;
+                    break;
+                case 1:
+                    type = Enemy.EnemyType.TYPE2;
+                    break;
+                default:
+                    type = Enemy.EnemyType.TYPE3;
+                    break;
+            }
+            
+            // สุ่มตำแหน่ง spawn รอบๆ boss
+            double angle = random.nextDouble() * Math.PI * 2;
+            double distance = 150 + random.nextDouble() * 100; // 150-250 px จาก boss
+            int spawnX = (int)(boss.getX() + Math.cos(angle) * distance);
+            int spawnY = (int)(boss.getY() + Math.sin(angle) * distance);
+            
+            // จำกัดให้อยู่ในขอบเขตแมพ
+            spawnX = Math.max(30, Math.min(WORLD_WIDTH - 30, spawnX));
+            spawnY = Math.max(30, Math.min(WORLD_HEIGHT - 30, spawnY));
+            
+            enemies.add(new Enemy(spawnX, spawnY, type));
+        }
+        
+        System.out.println("Spawned: TYPE1=" + type1Count + ", Total=" + totalEnemies);
     }
     
     private void shootEnemyBullets(Enemy enemy) {
@@ -647,34 +1091,109 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
             double fireAngle = player.getFacingAngle();
             double fireSpeed = 10.0;
             double damageMultiplier = 1.5;
-            bullets.add(new Bullet(player.getX(), player.getY(), fireAngle, fireSpeed, damageMultiplier));
+            Bullet bullet = new Bullet(player.getX(), player.getY(), fireAngle, fireSpeed, damageMultiplier);
+            bullet.setColor(new Color(0, 191, 255)); // สีฟ้า (Deep Sky Blue - RGB)
+            bullets.add(bullet);
         } else {
-            // Auto mode: aim at nearest enemy
-            if (!enemies.isEmpty()) {
-                // Find nearest enemy
-                Enemy nearestEnemy = null;
-                double nearestDistance = Double.MAX_VALUE;
-                
-                for (Enemy enemy : enemies) {
-                    double distance = Math.sqrt(Math.pow(enemy.getX() - player.getX(), 2) + 
-                                             Math.pow(enemy.getY() - player.getY(), 2));
-                    if (distance < nearestDistance) {
-                        nearestDistance = distance;
-                        nearestEnemy = enemy;
-                    }
-                }
-                
-                if (nearestEnemy != null) {
-                    // Compute desired angle and set as player's target facing
-                    double desiredAngle = Math.atan2(nearestEnemy.getY() - player.getY(), nearestEnemy.getX() - player.getX());
-                    player.setFacingAngle(desiredAngle);
-
-                    // Fire using current facingAngle (so rotation affects aim over time)
-                    double fireAngle = player.getFacingAngle();
-                    double fireSpeed = 10.0; // same as previous default
-                    bullets.add(new Bullet(player.getX(), player.getY(), fireAngle, fireSpeed));
+            // Auto mode: aim at nearest target (enemy or boss)
+            Object nearestTarget = null;
+            double nearestDistance = Double.MAX_VALUE;
+            
+            // Check enemies
+            for (Enemy enemy : enemies) {
+                double distance = Math.sqrt(Math.pow(enemy.getX() - player.getX(), 2) + 
+                                         Math.pow(enemy.getY() - player.getY(), 2));
+                if (distance < nearestDistance) {
+                    nearestDistance = distance;
+                    nearestTarget = enemy;
                 }
             }
+            
+            // Check boss
+            if (boss != null && !boss.isDead()) {
+                double distance = Math.sqrt(Math.pow(boss.getX() - player.getX(), 2) + 
+                                         Math.pow(boss.getY() - player.getY(), 2));
+                if (distance < nearestDistance) {
+                    nearestDistance = distance;
+                    nearestTarget = boss;
+                }
+            }
+            
+            if (nearestTarget != null) {
+                double targetX, targetY;
+                if (nearestTarget instanceof Enemy) {
+                    Enemy enemy = (Enemy) nearestTarget;
+                    targetX = enemy.getX();
+                    targetY = enemy.getY();
+                } else {
+                    Boss bossTarget = (Boss) nearestTarget;
+                    targetX = bossTarget.getX();
+                    targetY = bossTarget.getY();
+                }
+                
+                // Compute desired angle and set as player's target facing
+                double desiredAngle = Math.atan2(targetY - player.getY(), targetX - player.getX());
+                player.setFacingAngle(desiredAngle);
+
+                // Fire using current facingAngle with Blue color (RGB)
+                double fireAngle = player.getFacingAngle();
+                double fireSpeed = 10.0;
+                Bullet bullet = new Bullet(player.getX(), player.getY(), fireAngle, fireSpeed);
+                bullet.setColor(new Color(0, 191, 255)); // สีฟ้า (Deep Sky Blue - RGB)
+                bullets.add(bullet);
+            }
+        }
+    }
+    
+    private void shootBulletPlayer2() {
+        if (player2 == null) return;
+        
+        // Player2 always uses auto-aim (same as player1 in auto mode)
+        Object nearestTarget = null;
+        double nearestDistance = Double.MAX_VALUE;
+        
+        // Check enemies
+        for (Enemy enemy : enemies) {
+            double distance = Math.sqrt(Math.pow(enemy.getX() - player2.getX(), 2) + 
+                                     Math.pow(enemy.getY() - player2.getY(), 2));
+            if (distance < nearestDistance) {
+                nearestDistance = distance;
+                nearestTarget = enemy;
+            }
+        }
+        
+        // Check boss
+        if (boss != null && !boss.isDead()) {
+            double distance = Math.sqrt(Math.pow(boss.getX() - player2.getX(), 2) + 
+                                     Math.pow(boss.getY() - player2.getY(), 2));
+            if (distance < nearestDistance) {
+                nearestDistance = distance;
+                nearestTarget = boss;
+            }
+        }
+        
+        if (nearestTarget != null) {
+            double targetX, targetY;
+            if (nearestTarget instanceof Enemy) {
+                Enemy enemy = (Enemy) nearestTarget;
+                targetX = enemy.getX();
+                targetY = enemy.getY();
+            } else {
+                Boss bossTarget = (Boss) nearestTarget;
+                targetX = bossTarget.getX();
+                targetY = bossTarget.getY();
+            }
+            
+            // Compute desired angle and set as player2's target facing
+            double desiredAngle = Math.atan2(targetY - player2.getY(), targetX - player2.getX());
+            player2.setFacingAngle(desiredAngle);
+
+            // Fire using current facingAngle with Pink-Red color (RGB)
+            double fireAngle = player2.getFacingAngle();
+            double fireSpeed = 10.0;
+            Bullet bullet = new Bullet(player2.getX(), player2.getY(), fireAngle, fireSpeed);
+            bullet.setColor(new Color(255, 38, 71)); // สีแดงออกชมพู (RGB)
+            bullets2.add(bullet);
         }
     }
     
@@ -741,6 +1260,11 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                     // Draw game objects in world space
                     player.draw(g2d);
                     
+                    // Draw player2 if co-op mode active
+                    if (coopMode && player2 != null) {
+                        player2.draw(g2d);
+                    }
+                    
                     for (Enemy enemy : enemies) {
                         enemy.draw(g2d);
                     }
@@ -749,17 +1273,41 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                         bullet.draw(g2d);
                     }
                     
+                    // Draw player2 bullets if co-op mode active
+                    if (coopMode && player2 != null) {
+                        for (Bullet bullet : bullets2) {
+                            bullet.draw(g2d);
+                        }
+                    }
+                    
                     for (EnemyBullet enemyBullet : enemyBullets) {
                         enemyBullet.draw(g2d);
+                    }
+                    
+                    // Draw boss bullets
+                    for (BossBullet bossBullet : bossBullets) {
+                        bossBullet.draw(g2d);
+                    }
+                    
+                    // Draw boss lasers
+                    for (BossLaser laser : bossLasers) {
+                        laser.draw(g2d);
                     }
                     
                     for (PowerUp powerUp : powerUps) {
                         powerUp.draw(g2d);
                     }
                     
-                    // Draw Boss
-                    if (boss != null && !boss.isDead()) {
-                        boss.draw(g2d);
+                    // Draw Boss (with fade effect if dying)
+                    if (boss != null) {
+                        if (bossDeathAnimationActive) {
+                            // Draw fading boss during death animation
+                            g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, bossDeathAlpha));
+                            boss.draw(g2d);
+                            g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 1.0f));
+                        } else if (!boss.isDead()) {
+                            boss.draw(g2d);
+                        }
                     }
                     
                     // Draw damage popups
@@ -809,13 +1357,30 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                         enemyBullet.draw(g2d);
                     }
                     
+                    // Draw boss bullets
+                    for (BossBullet bossBullet : bossBullets) {
+                        bossBullet.draw(g2d);
+                    }
+                    
+                    // Draw boss lasers
+                    for (BossLaser laser : bossLasers) {
+                        laser.draw(g2d);
+                    }
+                    
                     for (PowerUp powerUp : powerUps) {
                         powerUp.draw(g2d);
                     }
                     
-                    // Draw Boss
-                    if (boss != null && !boss.isDead()) {
-                        boss.draw(g2d);
+                    // Draw Boss (with fade effect if dying)
+                    if (boss != null) {
+                        if (bossDeathAnimationActive) {
+                            // Draw fading boss during death animation
+                            g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, bossDeathAlpha));
+                            boss.draw(g2d);
+                            g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 1.0f));
+                        } else if (!boss.isDead()) {
+                            boss.draw(g2d);
+                        }
                     }
                     
                     // Draw damage popups
@@ -863,9 +1428,56 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         g2d.setColor(Color.WHITE);
         g2d.setFont(new Font("Arial", Font.BOLD, 16));
         
+        // ข้อมูลด้านซ้ายบน (Player 1)
         g2d.drawString("Score: " + score, 10, 25);
         g2d.drawString("Level: " + level, 10, 45);
         g2d.drawString("Health: " + player.getHealth(), 10, 65);
+        
+        // ถ้าอยู่ Co-op mode แสดงข้อมูล Player 2 ที่มุมขวาบน (คล้ายกับ Player 1)
+        if (coopMode && player2 != null) {
+            g2d.setColor(new Color(255, 105, 180)); // สีชมพู
+            int p2StartX = SCREEN_WIDTH - 220;
+            g2d.drawString("Player 2", p2StartX, 25);
+            g2d.drawString("Health: " + player2.getHealth(), p2StartX, 45);
+            
+            // Health bar สำหรับ Player 2
+            int hbX = p2StartX;
+            int hbY = 55;
+            int hbW = 200;
+            int hbH = 10;
+            g2d.setColor(new Color(255, 50, 100)); // สีแดงชมพู
+            int healthW = (int) Math.round(((double)player2.getHealth() / (double)player2.getMaxHealth()) * hbW);
+            g2d.fillRect(hbX, hbY, healthW, hbH);
+            g2d.setColor(new Color(255, 105, 180));
+            g2d.drawRect(hbX, hbY, hbW, hbH);
+            
+            // Shield bar สำหรับ Player 2 (ถ้ามี)
+            if (player2.getShieldCurrent() > 0 && player2.getShieldMax() > 0) {
+                int sx = p2StartX;
+                int sy = 70;
+                int sw = 200;
+                int sh = 8;
+                g2d.setColor(new Color(150, 200, 255)); // สีฟ้าอ่อน
+                int shieldW = (int) Math.round(((double)player2.getShieldCurrent() / (double)player2.getShieldMax()) * sw);
+                g2d.fillRect(sx, sy, shieldW, sh);
+                g2d.setColor(new Color(255, 105, 180));
+                g2d.drawRect(sx, sy, sw, sh);
+                g2d.setFont(new Font("Arial", Font.PLAIN, 12));
+                g2d.drawString("Shield: " + player2.getShieldCurrent() + "/" + player2.getShieldMax(), sx, sy + sh + 12);
+            }
+            
+            // Special cooldown สำหรับ Player 2
+            long lastUse = player2.getLastSpecialUseTime();
+            long cd = player2.getSpecialCooldownMs();
+            long now = System.currentTimeMillis();
+            long remaining = Math.max(0, cd - (now - lastUse));
+            int cooldownSeconds = (int) Math.ceil(remaining / 1000.0);
+            g2d.setFont(new Font("Arial", Font.PLAIN, 14));
+            g2d.setColor(remaining > 0 ? Color.GRAY : new Color(100, 255, 100));
+            g2d.drawString("Special (R-Shift): " + (remaining > 0 ? (cooldownSeconds + "s") : "Ready"), p2StartX, 100);
+            
+            g2d.setColor(Color.WHITE);
+        }
         
         // Timer countdown (3.5 minutes = 210 seconds)
         long elapsedMs = System.currentTimeMillis() - gameStartTime;
@@ -1180,7 +1792,7 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                 handleExitConfirmInput(key);
                 break;
             case GAME:
-                handleGameInput(key);
+                handleGameInput(key, e);
                 break;
             case PAUSED:
                 handlePausedInput(key);
@@ -1303,7 +1915,7 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         }
     }
     
-    private void handleGameInput(int key) {
+    private void handleGameInput(int key, KeyEvent e) {
         // If game over, ESC should go to menu, not pause
         if (key == KeyEvent.VK_ESCAPE) {
             if (!gameRunning) {
@@ -1326,10 +1938,36 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
             return;
         }
         
-        // M key toggles manual control mode
+        // J key toggles co-op mode (ต้องอยู่โหมด Auto เท่านั้น)
+        if (key == KeyEvent.VK_J && gameRunning) {
+            if (!manualControlMode) {
+                toggleCoopMode();
+            } else {
+                System.out.println("Cannot enter Co-op mode from Manual mode! Press M to switch to Auto mode first.");
+            }
+            return;
+        }
+        
+        // F key for player1 special ability
+        if (key == KeyEvent.VK_F && gameRunning) {
+            fPressed = true;
+            if (player != null) player.useSpecial(WORLD_WIDTH, WORLD_HEIGHT);
+        }
+        
+        // Right Shift key for player2 special ability (co-op mode)
+        if (key == KeyEvent.VK_SHIFT && e.getKeyLocation() == KeyEvent.KEY_LOCATION_RIGHT && gameRunning && coopMode && player2 != null) {
+            rightShiftPressed = true;
+            player2.useSpecial(WORLD_WIDTH, WORLD_HEIGHT);
+        }
+        
+        // M key toggles manual control mode (ต้องอยู่โหมด Auto เท่านั้น)
         if (key == KeyEvent.VK_M) {
-            manualControlMode = !manualControlMode;
-            System.out.println("Manual control mode: " + (manualControlMode ? "ON" : "OFF"));
+            if (!coopMode) {
+                manualControlMode = !manualControlMode;
+                System.out.println("Manual control mode: " + (manualControlMode ? "ON" : "OFF"));
+            } else {
+                System.out.println("Cannot enter Manual mode from Co-op mode! Press J to exit Co-op mode first.");
+            }
             return;
         }
         
@@ -1346,8 +1984,20 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
             if (key == KeyEvent.VK_DOWN) arrowDownPressed = true;
             if (key == KeyEvent.VK_LEFT) arrowLeftPressed = true;
             if (key == KeyEvent.VK_RIGHT) arrowRightPressed = true;
+        } else if (coopMode) {
+            // Co-op mode: WASD = Player1, Arrow keys = Player2
+            if (key == KeyEvent.VK_W) upPressed = true;
+            if (key == KeyEvent.VK_S) downPressed = true;
+            if (key == KeyEvent.VK_A) leftPressed = true;
+            if (key == KeyEvent.VK_D) rightPressed = true;
+            
+            // Arrow keys สำหรับ Player2 เท่านั้น (ไม่ควบคุม Player1)
+            if (key == KeyEvent.VK_UP) arrowUpPressed = true;
+            if (key == KeyEvent.VK_DOWN) arrowDownPressed = true;
+            if (key == KeyEvent.VK_LEFT) arrowLeftPressed = true;
+            if (key == KeyEvent.VK_RIGHT) arrowRightPressed = true;
         } else {
-            // Auto mode: both WASD and arrows can move
+            // Auto mode (Solo): both WASD and arrows can move Player1
             if (key == KeyEvent.VK_W || key == KeyEvent.VK_UP) upPressed = true;
             if (key == KeyEvent.VK_S || key == KeyEvent.VK_DOWN) downPressed = true;
             if (key == KeyEvent.VK_A || key == KeyEvent.VK_LEFT) leftPressed = true;
@@ -1430,6 +2080,18 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         type1MaxCap = 1 + random.nextInt(6);
         lastCapUpdate = System.currentTimeMillis();
         
+        // Reset boss death animation
+        bossDeathAnimationActive = false;
+        bossDeathAlpha = 1.0f;
+        
+        // Reset boss attack systems
+        bossBullets.clear();
+        bossLasers.clear();
+        bossLasersCreated = false;
+        lastHomingBulletSpawn = 0;
+        lastBossCollisionDamage = 0;
+        lastBossLaserDamage = 0;
+        
         // Reset camera
         cameraX = 0;
         cameraY = 0;
@@ -1441,6 +2103,14 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
     @Override
     public void keyReleased(KeyEvent e) {
         int key = e.getKeyCode();
+        
+        // Release special ability keys
+        if (key == KeyEvent.VK_F) fPressed = false;
+        
+        // Check if it's Right Shift specifically
+        if (key == KeyEvent.VK_SHIFT && e.getKeyLocation() == KeyEvent.KEY_LOCATION_RIGHT) {
+            rightShiftPressed = false;
+        }
         
         // Release movement keys
         if (key == KeyEvent.VK_W) upPressed = false;
