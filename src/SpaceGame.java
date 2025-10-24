@@ -6,9 +6,11 @@ import java.awt.image.BufferedImage;
 import javax.imageio.ImageIO;
 import java.io.File;
 import java.io.IOException;
+import java.io.*;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.Random;
+import javax.sound.sampled.*;
 
 public class SpaceGame extends JPanel implements ActionListener, KeyListener {
     
@@ -92,7 +94,8 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
     private final String[] pauseMenuOptions = {"Resume", "Settings", "Return to Main Menu"};
 
     // Options state
-    private int volume; // 0-100
+    private int bgmVolume; // 0-100
+    private int sfxVolume; // 0-100
     private boolean fullscreen;
     
     // Spacecraft selection
@@ -123,11 +126,29 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
     private boolean fPressed = false; // F key for player1 special
     private boolean rightShiftPressed = false; // Right Shift for player2 special
     
+    // Easter Egg System
+    private static final String EASTER_EGG_FILE = "easter_egg.dat";
+    private int easterEggMode = 0; // 0 = normal, 1 = special mode
+    private String keySequence = ""; // Track key sequence in menu
+    private static final String SECRET_CODE_SPECIAL = "drifx";
+    private static final String SECRET_CODE_NORMAL = "brex";
+    
+    // Audio System
+    private Clip bgmClip;
+    private Clip sfxClip;
+    private boolean audioInitialized = false;
+    
     public SpaceGame() {
         this.setPreferredSize(new Dimension(SCREEN_WIDTH, SCREEN_HEIGHT));
         this.setBackground(Color.BLACK);
         this.setFocusable(true);
         this.addKeyListener(this);
+        
+        // Load Easter egg mode from file
+        loadEasterEggMode();
+        
+        // Initialize audio system
+        initializeAudio();
         
         // เริ่มต้นที่หน้าเมนู
         currentState = GameState.MENU;
@@ -136,6 +157,9 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         
         initializeGame();
         loadSpacecraftMenuSprites();
+        
+        // Play menu BGM
+        playBGM();
     }
     
     private void loadSpacecraftMenuSprites() {
@@ -233,14 +257,16 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
     }
 
     private void initializeOptions() {
-        volume = 80; // default
+        bgmVolume = 80; // default BGM volume
+        sfxVolume = 80; // default SFX volume
         fullscreen = false;
         refreshOptionsItems();
     }
 
     private void refreshOptionsItems() {
         optionsMenuItems = new String[] {
-            "Volume: " + volume,
+            "BGM Volume: " + bgmVolume,
+            "SFX Volume: " + sfxVolume,
             "Fullscreen: " + (fullscreen ? "ON" : "OFF"),
             "Back to Menu"
         };
@@ -1086,6 +1112,9 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
     }
     
     private void shootBullet() {
+        // Play bullet sound effect
+        playBulletSound();
+        
         if (manualControlMode) {
             // Manual mode: shoot in facing direction with 1.5x damage
             double fireAngle = player.getFacingAngle();
@@ -1147,6 +1176,9 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
     
     private void shootBulletPlayer2() {
         if (player2 == null) return;
+        
+        // Play bullet sound effect
+        playBulletSound();
         
         // Player2 always uses auto-aim (same as player1 in auto mode)
         Object nearestTarget = null;
@@ -1801,6 +1833,29 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
     }
     
     private void handleMenuInput(int key) {
+        // Track key sequence for Easter egg codes
+        char keyChar = KeyEvent.getKeyText(key).toLowerCase().charAt(0);
+        if (Character.isLetter(keyChar)) {
+            keySequence += keyChar;
+            // Keep only last 5 characters
+            if (keySequence.length() > 5) {
+                keySequence = keySequence.substring(keySequence.length() - 5);
+            }
+            
+            // Check for secret codes
+            if (keySequence.endsWith(SECRET_CODE_SPECIAL)) {
+                saveEasterEggMode(1);
+                playBGM(); // Restart BGM with special mode
+                System.out.println("Special mode activated! (drifx entered)");
+                keySequence = ""; // Reset
+            } else if (keySequence.endsWith(SECRET_CODE_NORMAL)) {
+                saveEasterEggMode(0);
+                playBGM(); // Restart BGM with normal mode
+                System.out.println("Normal mode activated! (brex entered)");
+                keySequence = ""; // Reset
+            }
+        }
+        
         if (key == KeyEvent.VK_UP) {
             selectedMenuOption = (selectedMenuOption - 1 + mainMenuOptions.length) % mainMenuOptions.length;
         } else if (key == KeyEvent.VK_DOWN) {
@@ -1835,6 +1890,7 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
             selectedSpacecraft = (selectedSpacecraft + 1) % 3;
         } else if (key == KeyEvent.VK_ENTER) {
             // Confirm selection and start game with selected spacecraft
+            stopBGM(); // Stop menu BGM when starting game
             startNewGame();
         } else if (key == KeyEvent.VK_ESCAPE) {
             // Back to main menu
@@ -1849,28 +1905,37 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         } else if (key == KeyEvent.VK_DOWN) {
             selectedOptionsItem = (selectedOptionsItem + 1) % optionsMenuItems.length;
         } else if (key == KeyEvent.VK_LEFT || key == KeyEvent.VK_MINUS) {
-            // Decrease volume when on volume item
-            if (selectedOptionsItem == 0) {
-                volume = Math.max(0, volume - 5);
+            // Decrease volume when on volume items
+            if (selectedOptionsItem == 0) { // BGM Volume
+                bgmVolume = Math.max(0, bgmVolume - 5);
+                refreshOptionsItems();
+                updateBGMVolume();
+            } else if (selectedOptionsItem == 1) { // SFX Volume
+                sfxVolume = Math.max(0, sfxVolume - 5);
                 refreshOptionsItems();
             }
         } else if (key == KeyEvent.VK_RIGHT || key == KeyEvent.VK_EQUALS) {
             // Increase volume
-            if (selectedOptionsItem == 0) {
-                volume = Math.min(100, volume + 5);
+            if (selectedOptionsItem == 0) { // BGM Volume
+                bgmVolume = Math.min(100, bgmVolume + 5);
+                refreshOptionsItems();
+                updateBGMVolume();
+            } else if (selectedOptionsItem == 1) { // SFX Volume
+                sfxVolume = Math.min(100, sfxVolume + 5);
                 refreshOptionsItems();
             }
         } else if (key == KeyEvent.VK_ENTER) {
             switch (selectedOptionsItem) {
                 case 0:
-                    // Nothing on enter for volume
+                case 1:
+                    // Nothing on enter for volume items
                     break;
-                case 1: // Fullscreen toggle
+                case 2: // Fullscreen toggle
                     fullscreen = !fullscreen;
                     toggleFullscreen(fullscreen);
                     refreshOptionsItems();
                     break;
-                case 2: // Back
+                case 3: // Back
                     // Check if we came from pause menu
                     if (lastStateBeforeExitConfirm == GameState.PAUSED) {
                         currentState = GameState.PAUSED;
@@ -1922,6 +1987,7 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                 // Game over - return to main menu
                 currentState = GameState.MENU;
                 selectedMenuOption = 0;
+                playBGM(); // Play menu BGM when returning from game over
                 return;
             } else {
                 // Game running - pause game
@@ -2042,6 +2108,8 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                     boss = null;
                     bossSpawned = false;
                     player = null;
+                    // Play menu BGM when returning to menu
+                    playBGM();
                     break;
             }
         } else if (key == KeyEvent.VK_ESCAPE || key == KeyEvent.VK_P) {
@@ -2168,4 +2236,172 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         frame.setVisible(true);
         frame.revalidate();
     }
+    
+    // Easter Egg System Methods
+    private void loadEasterEggMode() {
+        try {
+            File file = new File(EASTER_EGG_FILE);
+            if (file.exists()) {
+                BufferedReader reader = new BufferedReader(new FileReader(file));
+                String line = reader.readLine();
+                reader.close();
+                if (line != null && line.trim().equals("1")) {
+                    easterEggMode = 1;
+                    System.out.println("Special mode activated!");
+                } else {
+                    easterEggMode = 0;
+                }
+            } else {
+                easterEggMode = 0;
+            }
+        } catch (IOException e) {
+            easterEggMode = 0;
+            System.out.println("Could not load Easter egg mode: " + e.getMessage());
+        }
+    }
+    
+    private void saveEasterEggMode(int mode) {
+        try {
+            BufferedWriter writer = new BufferedWriter(new FileWriter(EASTER_EGG_FILE));
+            writer.write(String.valueOf(mode));
+            writer.close();
+            easterEggMode = mode;
+            System.out.println("Easter egg mode saved: " + mode);
+        } catch (IOException e) {
+            System.out.println("Could not save Easter egg mode: " + e.getMessage());
+        }
+    }
+    
+    // Audio System Methods
+    private void initializeAudio() {
+        try {
+            audioInitialized = true;
+            System.out.println("Audio system initialized");
+        } catch (Exception e) {
+            System.out.println("Audio system initialization failed: " + e.getMessage());
+            audioInitialized = false;
+        }
+    }
+    
+    private void playBGM() {
+        if (!audioInitialized) return;
+        
+        try {
+            // Stop current BGM if playing
+            stopBGM();
+            
+            // Determine which BGM to play based on Easter egg mode
+            String bgmPath;
+            if (easterEggMode == 1) {
+                // Special mode - play dar_start.wav
+                bgmPath = "src/Sound/BMG/dar_start.wav";
+                // Try bin folder if not found in src
+                File testFile = new File(bgmPath);
+                if (!testFile.exists()) {
+                    bgmPath = "bin/Sound/BMG/dar_start.wav";
+                }
+                System.out.println("Playing Special Mode BGM: dar_start.wav");
+            } else {
+                // Normal mode - play Start BGM.wav
+                bgmPath = "src/Sound/BMG/Start BGM.wav";
+                System.out.println("Playing Normal Mode BGM: Start BGM.wav");
+            }
+            
+            File bgmFile = new File(bgmPath);
+            if (!bgmFile.exists()) {
+                System.out.println("BGM file not found: " + bgmPath);
+                return;
+            }
+            
+            // Load and play WAV file
+            AudioInputStream audioStream = AudioSystem.getAudioInputStream(bgmFile);
+            bgmClip = AudioSystem.getClip();
+            bgmClip.open(audioStream);
+            
+            // Set volume
+            updateBGMVolume();
+            
+            // Loop continuously
+            bgmClip.loop(Clip.LOOP_CONTINUOUSLY);
+            bgmClip.start();
+            System.out.println("BGM started successfully");
+            
+        } catch (Exception e) {
+            System.out.println("Could not play BGM: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+    
+    private void stopBGM() {
+        if (bgmClip != null) {
+            if (bgmClip.isRunning()) {
+                bgmClip.stop();
+            }
+            bgmClip.close();
+            bgmClip = null;
+            System.out.println("BGM stopped");
+        }
+    }
+    
+    private void updateBGMVolume() {
+        if (bgmClip != null && bgmClip.isOpen()) {
+            try {
+                FloatControl volumeControl = (FloatControl) bgmClip.getControl(FloatControl.Type.MASTER_GAIN);
+                // Convert 0-100 to decibels (range typically -80.0 to 6.0)
+                float dB = (float) (Math.log(bgmVolume / 100.0) * 20.0);
+                // Clamp to valid range
+                dB = Math.max(volumeControl.getMinimum(), Math.min(dB, volumeControl.getMaximum()));
+                volumeControl.setValue(dB);
+                System.out.println("BGM volume set to: " + bgmVolume + "% (" + dB + " dB)");
+            } catch (Exception e) {
+                System.out.println("Could not adjust BGM volume: " + e.getMessage());
+            }
+        }
+    }
+    
+    private void playSFX(String soundPath) {
+        if (!audioInitialized) return;
+        
+        try {
+            File soundFile = new File(soundPath);
+            if (!soundFile.exists()) {
+                System.out.println("SFX file not found: " + soundPath);
+                return;
+            }
+            
+            // Create a new clip for SFX (don't reuse to allow overlapping sounds)
+            AudioInputStream audioStream = AudioSystem.getAudioInputStream(soundFile);
+            Clip clip = AudioSystem.getClip();
+            clip.open(audioStream);
+            
+            // Set SFX volume
+            try {
+                FloatControl volumeControl = (FloatControl) clip.getControl(FloatControl.Type.MASTER_GAIN);
+                float dB = (float) (Math.log(sfxVolume / 100.0) * 20.0);
+                dB = Math.max(volumeControl.getMinimum(), Math.min(dB, volumeControl.getMaximum()));
+                volumeControl.setValue(dB);
+            } catch (Exception e) {
+                System.out.println("Could not adjust SFX volume: " + e.getMessage());
+            }
+            
+            clip.start();
+            
+            // Clean up after playing
+            clip.addLineListener(event -> {
+                if (event.getType() == LineEvent.Type.STOP) {
+                    clip.close();
+                }
+            });
+            
+        } catch (Exception e) {
+            System.out.println("Could not play SFX: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+    
+    private void playBulletSound() {
+        // Use Laser Beam.wav (note the space in filename)
+        playSFX("src/Sound/SFX/Laser Beam.wav");
+    }
 }
+
