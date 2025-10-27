@@ -54,6 +54,11 @@ public class Player {
     // spacecraftType: 0=Large, 1=Medium, 2=Small
     // stats: HP, Speed, Firerate (shots/min), Special ability index
     public Player(int x, int y, int spacecraftType, int hp, int speedStat, int firerateStat) {
+        this(x, y, spacecraftType, hp, speedStat, firerateStat, null);
+    }
+    
+    // Constructor with custom sprite path (for Player 2)
+    public Player(int x, int y, int spacecraftType, int hp, int speedStat, int firerateStat, String customSpritePath) {
         this.x = x;
         this.y = y;
         // store spacecraft type so specials map correctly
@@ -71,16 +76,20 @@ public class Player {
         // Convert shots/min to milliseconds between shots
         this.fireRate = (int)(60000.0 / firerateStat); // e.g., 60 shots/min -> 1000ms
         
-        // Load sprite based on spacecraft type
-        String[] spriteNames = {
-            "Spacecraft-Large.png",
-            "Spacecraft-Medium.png",
-            "spacecraft.png"
-        };
-        String spriteName = spriteNames[spacecraftType];
-        
-        // Load spacecraft sprite
-        loadSprite(spriteName);
+        // Load sprite
+        if (customSpritePath != null) {
+            // Use custom sprite path
+            loadSprite(customSpritePath);
+        } else {
+            // Load default sprite based on spacecraft type
+            String[] spriteNames = {
+                "Spacecraft-Large.png",
+                "Spacecraft-Medium.png",
+                "spacecraft.png"
+            };
+            String spriteName = spriteNames[spacecraftType];
+            loadSprite(spriteName);
+        }
     }
     
     private void loadSprite(String spriteName) {

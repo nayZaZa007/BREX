@@ -16,7 +16,7 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
     
     // Game States
     public enum GameState {
-        MENU, SPACECRAFT_SELECT, GAME, OPTIONS, EXIT_CONFIRM, PAUSED
+        MENU, SPACECRAFT_SELECT, GAME, OPTIONS, EXIT_CONFIRM, PAUSED, LEVEL1_WIN
     }
     
     private static final int SCREEN_WIDTH = 1000;  // หน้าจอที่เห็น
@@ -69,6 +69,13 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
     private static final long BOSS_DEATH_DURATION = 8000; // 8 seconds
     private int bossFinalX, bossFinalY; // Store boss position when it dies
     private float bossDeathAlpha = 1.0f; // For fading boss sprite
+    
+    // Level 1 Win Screen Animation
+    private BufferedImage[] winAnimFrames = new BufferedImage[3]; // BOOM_0, BOOM2_0, BOOM3_0
+    private int winAnimCurrentFrame = 0;
+    private long winAnimLastFrameTime = 0;
+    private static final long WIN_ANIM_FRAME_DURATION = 1000; // 0.5 fps = 2000ms per frame
+    private boolean level1Unlocked = false; // Track if level 2 is unlocked
     
     // TYPE1 enemy spawn cap
     private int type1MaxCap = 1; // Random 1-6
@@ -133,14 +140,21 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
     private static final String SECRET_CODE_SPECIAL = "drifx";
     private static final String SECRET_CODE_NORMAL = "brex";
     
+    // Settings System
+    private static final String SETTINGS_FILE = "settings.dat";
+    
     // Audio System
     private Clip bgmClip;
     private static final int SFX_POOL_SIZE = 8; // Pool size for simultaneous sound effects
     private Clip[] sfxPool = new Clip[SFX_POOL_SIZE];
     private int sfxPoolIndex = 0; // Round-robin index for pool
     private boolean audioInitialized = false;
-    private boolean isInGameBGM = false; // Track if we're in game (for Easter egg BGM cycling)
+    private boolean isInGameBGM = false; // Track if we're in game (for BGM management)
     private boolean isFirstGameBGM = true; // Track if this is the first in-game BGM
+    private boolean isFadingOut = false; // Track if BGM is fading out
+    private long fadeStartTime = 0; // When fade-out started
+    private static final long FADE_DURATION = 5000; // 5 seconds fade-out
+    private static final long FADE_START_BEFORE_BOSS = 10000; // Start fading 10 seconds before boss
     
     public SpaceGame() {
         this.setPreferredSize(new Dimension(SCREEN_WIDTH, SCREEN_HEIGHT));
@@ -153,6 +167,9 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         
         // Initialize audio system
         initializeAudio();
+        
+        // Load win animation frames
+        loadWinAnimationFrames();
         
         // เริ่มต้นที่หน้าเมนู
         currentState = GameState.MENU;
@@ -209,6 +226,58 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         }
     }
     
+    private void loadWinAnimationFrames() {
+        // Load 3 animation frames for win screen
+        String[] frameNames = {
+            "Ani/BOOM_0.png",
+            "Ani/BOOM2_0.png",
+            "Ani/BOOM3_0.png"
+        };
+        
+        String[] basePaths = {
+            "src/Pic/",
+            "./src/Pic/",
+            "Pic/",
+            "./Pic/",
+            "bin/Pic/"
+        };
+        
+        for (int i = 0; i < frameNames.length; i++) {
+            String name = frameNames[i];
+            
+            // Try classpath first
+            try {
+                java.io.InputStream is = getClass().getResourceAsStream("/Pic/" + name);
+                if (is != null) {
+                    winAnimFrames[i] = ImageIO.read(is);
+                    is.close();
+                    System.out.println("Loaded win animation frame " + i + " from classpath");
+                    continue;
+                }
+            } catch (IOException ex) {
+                // continue
+            }
+            
+            // Try filesystem paths
+            for (String base : basePaths) {
+                try {
+                    File f = new File(base + name);
+                    if (f.exists()) {
+                        winAnimFrames[i] = ImageIO.read(f);
+                        System.out.println("Loaded win animation frame " + i + " from: " + f.getAbsolutePath());
+                        break;
+                    }
+                } catch (IOException ex) {
+                    // continue
+                }
+            }
+            
+            if (winAnimFrames[i] == null) {
+                System.out.println("Warning: Could not load win animation frame: " + name);
+            }
+        }
+    }
+    
     private void initializeGame() {
         player = new Player(WORLD_WIDTH / 2, WORLD_HEIGHT / 2);
         player2 = null; // Co-op player starts as null
@@ -261,9 +330,8 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
     }
 
     private void initializeOptions() {
-        bgmVolume = 80; // default BGM volume
-        sfxVolume = 80; // default SFX volume
-        fullscreen = false;
+        // Load settings from file, or use defaults
+        loadSettings();
         refreshOptionsItems();
     }
 
@@ -318,11 +386,47 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
             System.out.println("TYPE1 max cap updated: " + type1MaxCap);
         }
         
-        // Check for Boss spawn at 3.5 minutes
+        // BGM fade-out and boss music management
         long elapsedTime = System.currentTimeMillis() - gameStartTime;
+        long timeUntilBoss = BOSS_SPAWN_TIME - elapsedTime;
+        
+        // Start fading out 10 seconds before boss
+        if (!bossSpawned && !isFadingOut && timeUntilBoss <= FADE_START_BEFORE_BOSS && timeUntilBoss > 0) {
+            isFadingOut = true;
+            fadeStartTime = System.currentTimeMillis();
+            System.out.println("Starting BGM fade-out (10 seconds before boss)");
+        }
+        
+        // Apply fade-out
+        if (isFadingOut && !bossSpawned) {
+            long fadeDuration = System.currentTimeMillis() - fadeStartTime;
+            if (fadeDuration < FADE_DURATION) {
+                // Gradually reduce volume over 5 seconds
+                float fadeProgress = fadeDuration / (float) FADE_DURATION;
+                int currentVolume = (int) (bgmVolume * (1.0f - fadeProgress));
+                
+                if (bgmClip != null && bgmClip.isOpen()) {
+                    try {
+                        FloatControl volumeControl = (FloatControl) bgmClip.getControl(FloatControl.Type.MASTER_GAIN);
+                        float dB = (float) (Math.log(Math.max(1, currentVolume) / 100.0) * 20.0);
+                        dB = Math.max(volumeControl.getMinimum(), Math.min(dB, volumeControl.getMaximum()));
+                        volumeControl.setValue(dB);
+                    } catch (Exception e) {
+                        // Ignore volume control errors during fade
+                    }
+                }
+            } else {
+                // Fade complete - stop BGM
+                stopBGM();
+            }
+        }
+        
+        // Check for Boss spawn at 3.5 minutes
         if (!bossSpawned && elapsedTime >= BOSS_SPAWN_TIME) {
             spawnBoss();
             bossSpawned = true;
+            // Play boss music
+            playBossBGM();
         }
         
         // Spawn enemies (stop spawning when boss appears)
@@ -707,6 +811,13 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
             if (elapsed >= BOSS_DEATH_DURATION) {
                 bossDeathAnimationActive = false;
                 boss = null; // Finally remove boss
+                
+                // Transition to Level 1 Win Screen
+                currentState = GameState.LEVEL1_WIN;
+                level1Unlocked = true; // Unlock level 2
+                winAnimCurrentFrame = 0;
+                winAnimLastFrameTime = System.currentTimeMillis();
+                System.out.println("Level 1 Complete! Transitioning to win screen...");
             }
         }
 
@@ -1032,8 +1143,14 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
             int p2Firerate = p1Firerate;
             
             // Spawn player2 ห่างจาก player1 50px ทางซ้าย
-            player2 = new Player((int)player.getX() - 50, (int)player.getY(), 
-                                p1Type, p2HP, p2Speed, p2Firerate);
+            // If small spacecraft (type 2) is selected, use custom Player 2 sprite
+            if (p1Type == 2) {
+                player2 = new Player((int)player.getX() - 50, (int)player.getY(), 
+                                    p1Type, p2HP, p2Speed, p2Firerate, "spacecraftP2.png");
+            } else {
+                player2 = new Player((int)player.getX() - 50, (int)player.getY(), 
+                                    p1Type, p2HP, p2Speed, p2Firerate);
+            }
             
             System.out.println("Co-op mode: ON (Player 2 created with same stats as Player 1)");
         } else {
@@ -1454,6 +1571,59 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                 // Draw pause menu
                 drawPauseMenu(g2d);
                 break;
+                
+            case LEVEL1_WIN:
+                // Draw game in background (frozen)
+                if (gameRunning || !gameRunning) { // Draw regardless
+                    AffineTransform old = g2d.getTransform();
+                    g2d.translate(-cameraX, -cameraY);
+                    
+                    // Draw stars background
+                    drawStars(g2d);
+                    
+                    // Draw game objects in world space
+                    player.draw(g2d);
+                    
+                    if (coopMode && player2 != null) {
+                        player2.draw(g2d);
+                    }
+                    
+                    for (Enemy enemy : enemies) {
+                        enemy.draw(g2d);
+                    }
+                    
+                    for (Bullet bullet : bullets) {
+                        bullet.draw(g2d);
+                    }
+                    
+                    for (EnemyBullet enemyBullet : enemyBullets) {
+                        enemyBullet.draw(g2d);
+                    }
+                    
+                    for (PowerUp powerUp : powerUps) {
+                        powerUp.draw(g2d);
+                    }
+                    
+                    // Draw damage popups
+                    for (DamagePopup popup : damagePopups) {
+                        popup.draw(g2d);
+                    }
+                    
+                    // Draw explosion particles
+                    for (ExplosionParticle particle : explosionParticles) {
+                        particle.draw(g2d);
+                    }
+                    
+                    g2d.setTransform(old);
+                }
+                
+                // Draw dark overlay
+                g2d.setColor(new Color(0, 0, 0, 150));
+                g2d.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+                
+                // Draw Level 1 Win Screen
+                drawLevel1WinScreen(g2d);
+                break;
         }
     }
     
@@ -1585,11 +1755,14 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
     }
     
     // Helper method to draw UI for one player
-    private void drawPlayerUI(Graphics2D g2d, Player p, int startX, boolean isLeft, String playerName, String specialKey) {
+    private void drawPlayerUI(Graphics2D g2d, Player displayPlayer, int startX, boolean isLeft, String playerName, String specialKey) {
         Color mainColor = isLeft ? Color.WHITE : new Color(255, 105, 180); // ขาว หรือ ชมพู
         Color healthBarColor = isLeft ? Color.RED : new Color(255, 50, 100);
         Color shieldBarColor = Color.BLUE;
         Color specialReadyColor = Color.GREEN;
+        
+        // In co-op mode, always show Player 1's health/shield (shared)
+        Player statsPlayer = player; // Always use player1 for health/shield stats
         
         g2d.setColor(mainColor);
         g2d.setFont(new Font("Arial", Font.BOLD, 16));
@@ -1598,7 +1771,7 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         g2d.drawString(playerName, startX, 25);
         g2d.drawString("Score: " + score, startX, 45);
         g2d.drawString("Level: " + level, startX, 65);
-        g2d.drawString("HP: " + p.getHealth() + "/" + p.getMaxHealth(), startX, 85);
+        g2d.drawString("HP: " + statsPlayer.getHealth() + "/" + statsPlayer.getMaxHealth(), startX, 85);
         
         // Health bar
         int hbX = startX;
@@ -1606,35 +1779,35 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         int hbW = 200;
         int hbH = 10;
         g2d.setColor(healthBarColor);
-        int healthW = (int) Math.round(((double)p.getHealth() / (double)p.getMaxHealth()) * hbW);
+        int healthW = (int) Math.round(((double)statsPlayer.getHealth() / (double)statsPlayer.getMaxHealth()) * hbW);
         g2d.fillRect(hbX, hbY, healthW, hbH);
         g2d.setColor(mainColor);
         g2d.drawRect(hbX, hbY, hbW, hbH);
         
         // Shield bar (if active)
-        if (p.getShieldCurrent() > 0 && p.getShieldMax() > 0) {
+        if (statsPlayer.getShieldCurrent() > 0 && statsPlayer.getShieldMax() > 0) {
             int sx = startX;
             int sy = 110;
             int sw = 200;
             int sh = 8;
             g2d.setColor(shieldBarColor);
-            int shieldW = (int) Math.round(((double)p.getShieldCurrent() / (double)p.getShieldMax()) * sw);
+            int shieldW = (int) Math.round(((double)statsPlayer.getShieldCurrent() / (double)statsPlayer.getShieldMax()) * sw);
             g2d.fillRect(sx, sy, shieldW, sh);
             g2d.setColor(mainColor);
             g2d.drawRect(sx, sy, sw, sh);
             g2d.setFont(new Font("Arial", Font.PLAIN, 12));
-            g2d.drawString("Shield: " + p.getShieldCurrent() + "/" + p.getShieldMax(), sx, sy + sh + 12);
+            g2d.drawString("Shield: " + statsPlayer.getShieldCurrent() + "/" + statsPlayer.getShieldMax(), sx, sy + sh + 12);
         }
         
-        // Special cooldown
-        long lastUse = p.getLastSpecialUseTime();
-        long cd = p.getSpecialCooldownMs();
+        // Special cooldown (use the actual player's cooldown)
+        long lastUse = displayPlayer.getLastSpecialUseTime();
+        long cd = displayPlayer.getSpecialCooldownMs();
         long now = System.currentTimeMillis();
         long remaining = Math.max(0, cd - (now - lastUse));
         int cooldownSeconds = (int) Math.ceil(remaining / 1000.0);
         g2d.setFont(new Font("Arial", Font.PLAIN, 14));
         g2d.setColor(remaining > 0 ? Color.GRAY : specialReadyColor);
-        int specialY = (p.getShieldCurrent() > 0) ? 135 : 125;
+        int specialY = (statsPlayer.getShieldCurrent() > 0) ? 135 : 125;
         g2d.drawString("Special (" + specialKey + "): " + (remaining > 0 ? (cooldownSeconds + "s") : "Ready"), startX, specialY);
         
         g2d.setColor(Color.WHITE);
@@ -1774,6 +1947,68 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         g2d.drawString("Use ↑↓ to navigate, ENTER to select, ESC to resume", 10, SCREEN_HEIGHT - 20);
     }
     
+    private void drawLevel1WinScreen(Graphics2D g2d) {
+        // Update animation frame
+        long currentTime = System.currentTimeMillis();
+        if (currentTime - winAnimLastFrameTime >= WIN_ANIM_FRAME_DURATION) {
+            winAnimCurrentFrame = (winAnimCurrentFrame + 1) % 3; // Loop through 3 frames
+            winAnimLastFrameTime = currentTime;
+        }
+        
+        // Draw animated explosion in center
+        if (winAnimFrames[winAnimCurrentFrame] != null) {
+            int animWidth = 200; // Scale animation
+            int animHeight = 200;
+            int animX = (SCREEN_WIDTH - animWidth) / 2;
+            int animY = SCREEN_HEIGHT / 2 - 270;
+            g2d.drawImage(winAnimFrames[winAnimCurrentFrame], animX, animY, animWidth, animHeight, null);
+        } else {
+            // Fallback: draw placeholder circle if image not loaded
+            g2d.setColor(Color.ORANGE);
+            g2d.fillOval(SCREEN_WIDTH / 2 - 50, SCREEN_HEIGHT / 2 - 200, 100, 100);
+        }
+        
+        // Draw "BOSS ELIMINATED" title
+        g2d.setColor(Color.YELLOW);
+        g2d.setFont(new Font("Arial", Font.BOLD, 48));
+        FontMetrics titleFm = g2d.getFontMetrics();
+        String title = "BOSS ELIMINATED";
+        int titleX = (SCREEN_WIDTH - titleFm.stringWidth(title)) / 2;
+        g2d.drawString(title, titleX, SCREEN_HEIGHT / 2 - 20);
+        
+        // Draw level complete message
+        g2d.setColor(Color.CYAN);
+        g2d.setFont(new Font("Arial", Font.BOLD, 32));
+        FontMetrics msgFm = g2d.getFontMetrics();
+        String levelMsg = "LEVEL 1 COMPLETE";
+        int levelX = (SCREEN_WIDTH - msgFm.stringWidth(levelMsg)) / 2;
+        g2d.drawString(levelMsg, levelX, SCREEN_HEIGHT / 2 + 40);
+        
+        // Draw unlock message
+        g2d.setColor(Color.GREEN);
+        g2d.setFont(new Font("Arial", Font.BOLD, 24));
+        FontMetrics unlockFm = g2d.getFontMetrics();
+        String unlockMsg = "LEVEL 2 UNLOCKED";
+        int unlockX = (SCREEN_WIDTH - unlockFm.stringWidth(unlockMsg)) / 2;
+        g2d.drawString(unlockMsg, unlockX, SCREEN_HEIGHT / 2 + 90);
+        
+        // Draw score
+        g2d.setColor(Color.WHITE);
+        g2d.setFont(new Font("Arial", Font.BOLD, 20));
+        FontMetrics scoreFm = g2d.getFontMetrics();
+        String scoreText = "Final Score: " + score;
+        int scoreX = (SCREEN_WIDTH - scoreFm.stringWidth(scoreText)) / 2;
+        g2d.drawString(scoreText, scoreX, SCREEN_HEIGHT / 2 + 140);
+        
+        // Draw instructions
+        g2d.setColor(Color.GRAY);
+        g2d.setFont(new Font("Arial", Font.PLAIN, 16));
+        FontMetrics instrFm = g2d.getFontMetrics();
+        String instr = "Press ENTER to return to Main Menu";
+        int instrX = (SCREEN_WIDTH - instrFm.stringWidth(instr)) / 2;
+        g2d.drawString(instr, instrX, SCREEN_HEIGHT - 40);
+    }
+    
     private void drawGameOver(Graphics2D g2d) {
         g2d.setColor(Color.RED);
         g2d.setFont(new Font("Arial", Font.BOLD, 48));
@@ -1886,6 +2121,9 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
             case PAUSED:
                 handlePausedInput(key);
                 break;
+            case LEVEL1_WIN:
+                handleLevel1WinInput(key);
+                break;
         }
     }
     
@@ -1924,6 +2162,7 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                     selectedSpacecraft = 0;
                     break;
                 case 1: // Options
+                    lastStateBeforeExitConfirm = GameState.MENU; // Track that we came from menu
                     currentState = GameState.OPTIONS;
                     selectedOptionsItem = 0;
                     break;
@@ -1993,7 +2232,9 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                     refreshOptionsItems();
                     break;
                 case 3: // Back
-                    // Check if we came from pause menu
+                    // Save settings before returning
+                    saveSettings();
+                    // Return to the state we came from (MENU or PAUSED)
                     if (lastStateBeforeExitConfirm == GameState.PAUSED) {
                         currentState = GameState.PAUSED;
                         selectedMenuOption = 0;
@@ -2004,7 +2245,9 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                     break;
             }
         } else if (key == KeyEvent.VK_ESCAPE) {
-            // Return to previous state
+            // Save settings before returning
+            saveSettings();
+            // Return to the state we came from
             if (lastStateBeforeExitConfirm == GameState.PAUSED) {
                 currentState = GameState.PAUSED;
                 selectedMenuOption = 0;
@@ -2176,6 +2419,36 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
             currentState = GameState.GAME;
         }
     }
+    
+    private void handleLevel1WinInput(int key) {
+        if (key == KeyEvent.VK_ENTER) {
+            // Return to main menu
+            currentState = GameState.MENU;
+            selectedMenuOption = 0;
+            gameRunning = false;
+            
+            // Reset game state
+            enemies = new ArrayList<>();
+            bullets = new ArrayList<>();
+            bullets2 = new ArrayList<>();
+            enemyBullets = new ArrayList<>();
+            damagePopups = new ArrayList<>();
+            explosionParticles = new ArrayList<>();
+            boss = null;
+            bossSpawned = false;
+            bossDeathAnimationActive = false;
+            player = null;
+            player2 = null;
+            coopMode = false;
+            
+            // Stop in-game BGM mode and play menu BGM
+            isInGameBGM = false;
+            stopBGM();
+            playBGM();
+            
+            System.out.println("Returned to main menu. Level 2 is now available.");
+        }
+    }
 
     
     private void startNewGame() {
@@ -2195,6 +2468,11 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         int firerate = spacecraftStats[2][selectedSpacecraft];
         player = new Player(WORLD_WIDTH / 2, WORLD_HEIGHT / 2, selectedSpacecraft, hp, speed, firerate);
         
+        // Reset co-op mode and player2
+        coopMode = false;
+        player2 = null;
+        bullets2 = new ArrayList<>();
+        
         // Clear/reset all game objects
         enemies = new ArrayList<>();
         bullets = new ArrayList<>();
@@ -2203,6 +2481,11 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         damagePopups = new ArrayList<>();
         explosionParticles = new ArrayList<>();
         boss = null;
+        bossSpawned = false;
+        
+        // Reset BGM fade-out state
+        isFadingOut = false;
+        fadeStartTime = 0;
         bossSpawned = false;
         type1MaxCap = 1 + random.nextInt(6);
         lastCapUpdate = System.currentTimeMillis();
@@ -2324,6 +2607,46 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         }
     }
     
+    // Settings System Methods
+    private void loadSettings() {
+        try {
+            File file = new File(SETTINGS_FILE);
+            if (file.exists()) {
+                BufferedReader reader = new BufferedReader(new FileReader(file));
+                bgmVolume = Integer.parseInt(reader.readLine());
+                sfxVolume = Integer.parseInt(reader.readLine());
+                fullscreen = Boolean.parseBoolean(reader.readLine());
+                reader.close();
+                System.out.println("Settings loaded: BGM=" + bgmVolume + ", SFX=" + sfxVolume + ", Fullscreen=" + fullscreen);
+            } else {
+                // Default settings
+                bgmVolume = 80;
+                sfxVolume = 80;
+                fullscreen = false;
+                System.out.println("No settings file found, using defaults");
+            }
+        } catch (Exception e) {
+            // Use defaults on error
+            bgmVolume = 80;
+            sfxVolume = 80;
+            fullscreen = false;
+            System.out.println("Could not load settings: " + e.getMessage());
+        }
+    }
+    
+    private void saveSettings() {
+        try {
+            BufferedWriter writer = new BufferedWriter(new FileWriter(SETTINGS_FILE));
+            writer.write(String.valueOf(bgmVolume) + "\n");
+            writer.write(String.valueOf(sfxVolume) + "\n");
+            writer.write(String.valueOf(fullscreen) + "\n");
+            writer.close();
+            System.out.println("Settings saved: BGM=" + bgmVolume + ", SFX=" + sfxVolume + ", Fullscreen=" + fullscreen);
+        } catch (IOException e) {
+            System.out.println("Could not save settings: " + e.getMessage());
+        }
+    }
+    
     // Audio System Methods
     private void initializeAudio() {
         try {
@@ -2413,28 +2736,37 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
     
     private void playInGameBGM() {
         if (!audioInitialized) return;
-        if (easterEggMode != 1) return; // Only for Easter egg mode
         
         try {
             // Stop current BGM if playing
             stopBGM();
             
             String bgmPath;
-            if (isFirstGameBGM) {
-                // First time: always play Dar_ingame.wav
-                bgmPath = "src/Sound/BMG/Dar_ingame.wav";
-                System.out.println("Playing first in-game BGM: Dar_ingame.wav");
-                isFirstGameBGM = false;
+            
+            if (easterEggMode == 1) {
+                // Special mode: use Dar_ingame files
+                if (isFirstGameBGM) {
+                    bgmPath = "bin/Sound/BMG/Dar_ingame.wav";
+                    System.out.println("Playing first in-game BGM (Special): Dar_ingame.wav");
+                    isFirstGameBGM = false;
+                } else {
+                    int choice = random.nextInt(2);
+                    if (choice == 0) {
+                        bgmPath = "bin/Sound/BMG/Dar_ingame.wav";
+                    } else {
+                        bgmPath = "bin/Sound/BMG/Dar_ingame2.wav";
+                    }
+                    System.out.println("Playing random in-game BGM (Special): " + bgmPath);
+                }
             } else {
-                // After first song: randomly choose between Dar_ingame.wav and Dar_ingame2.wav
+                // Normal mode: use Nor_ingame files
                 int choice = random.nextInt(2);
                 if (choice == 0) {
-                    bgmPath = "src/Sound/BMG/Dar_ingame.wav";
-                    System.out.println("Playing random in-game BGM: Dar_ingame.wav");
+                    bgmPath = "bin/Sound/BMG/Nor_ingame1.wav";
                 } else {
-                    bgmPath = "src/Sound/BMG/Dar_ingame2.wav";
-                    System.out.println("Playing random in-game BGM: Dar_ingame2.wav");
+                    bgmPath = "bin/Sound/BMG/Nor_ingame2.wav";
                 }
+                System.out.println("Playing random in-game BGM (Normal): " + bgmPath);
             }
             
             File bgmFile = new File(bgmPath);
@@ -2451,20 +2783,55 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
             // Set volume
             updateBGMVolume();
             
-            // Add listener to play next random track when this one ends
+            // Add listener for when song ends - play next random song
             bgmClip.addLineListener(event -> {
-                if (event.getType() == LineEvent.Type.STOP && isInGameBGM) {
-                    // Song ended - play next random track
-                    playInGameBGM();
+                if (event.getType() == LineEvent.Type.STOP && isInGameBGM && !bossSpawned && !isFadingOut) {
+                    // Song ended naturally, play next random one
+                    SwingUtilities.invokeLater(() -> playInGameBGM());
                 }
             });
             
-            // Start playing (once - will loop via listener)
+            // Start playing (don't loop - we'll handle random selection when it ends)
             bgmClip.start();
             System.out.println("In-game BGM started successfully");
             
         } catch (Exception e) {
             System.out.println("Could not play in-game BGM: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+    
+    private void playBossBGM() {
+        if (!audioInitialized) return;
+        
+        try {
+            // Stop current BGM if playing
+            stopBGM();
+            
+            String bgmPath = "bin/Sound/BMG/BossSong.wav";
+            System.out.println("Playing Boss BGM: " + bgmPath);
+            
+            File bgmFile = new File(bgmPath);
+            if (!bgmFile.exists()) {
+                System.out.println("Boss BGM file not found: " + bgmPath);
+                return;
+            }
+            
+            // Load and play WAV file
+            AudioInputStream audioStream = AudioSystem.getAudioInputStream(bgmFile);
+            bgmClip = AudioSystem.getClip();
+            bgmClip.open(audioStream);
+            
+            // Set volume
+            updateBGMVolume();
+            
+            // Loop boss music
+            bgmClip.loop(Clip.LOOP_CONTINUOUSLY);
+            bgmClip.start();
+            System.out.println("Boss BGM started successfully");
+            
+        } catch (Exception e) {
+            System.out.println("Could not play Boss BGM: " + e.getMessage());
             e.printStackTrace();
         }
     }
@@ -2478,6 +2845,7 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
             bgmClip = null;
             System.out.println("BGM stopped");
         }
+        isFadingOut = false;
     }
     
     private void updateBGMVolume() {

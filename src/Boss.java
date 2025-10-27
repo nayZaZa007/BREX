@@ -56,7 +56,7 @@ public class Boss {
         this.y = y;
         this.width = 120;
         this.height = 120;
-        this.maxHealth = 1000;
+        this.maxHealth = 100;
         this.health = maxHealth;
         this.speed = 0.5; // ช้ามาก
         this.targetX = x;
