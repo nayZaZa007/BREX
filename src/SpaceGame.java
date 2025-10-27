@@ -25,11 +25,6 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
     private static final int WORLD_HEIGHT = 2100;  // โลกทั้งหมด (3x ใหญ่กว่า)
     private static final int DELAY = 16; // ~60 FPS
     
-    // Performance optimization flags
-    private static final boolean ENABLE_DEBUG_LOGGING = false; // Set to false for better performance
-    private static final boolean ENABLE_ANTIALIASING = false; // Disable for better performance on low-end PCs
-    private static final int MAX_PARTICLES = 50; // Limit explosion particles
-    
     private Timer timer;
     private Player player;
     private Player player2; // Co-op mode player 2
@@ -53,7 +48,7 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
     // Boss
     private Boss boss;
     private boolean bossSpawned = false;
-    private static final long BOSS_SPAWN_TIME = 2100; // 3.5 minutes in milliseconds
+    private static final long BOSS_SPAWN_TIME = 10000; // 3.5 minutes in milliseconds
     
     // Boss attack system
     private ArrayList<BossBullet> bossBullets = new ArrayList<>();
@@ -140,10 +135,12 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
     
     // Audio System
     private Clip bgmClip;
-    private static final int SFX_POOL_SIZE = 5; // Pool of reusable sound clips
+    private static final int SFX_POOL_SIZE = 8; // Pool size for simultaneous sound effects
     private Clip[] sfxPool = new Clip[SFX_POOL_SIZE];
-    private int currentSfxIndex = 0;
+    private int sfxPoolIndex = 0; // Round-robin index for pool
     private boolean audioInitialized = false;
+    private boolean isInGameBGM = false; // Track if we're in game (for Easter egg BGM cycling)
+    private boolean isFirstGameBGM = true; // Track if this is the first in-game BGM
     
     public SpaceGame() {
         this.setPreferredSize(new Dimension(SCREEN_WIDTH, SCREEN_HEIGHT));
@@ -318,7 +315,7 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         if (System.currentTimeMillis() - lastCapUpdate > 15000) {
             type1MaxCap = 1 + random.nextInt(6); // Random 1-6
             lastCapUpdate = System.currentTimeMillis();
-            if (ENABLE_DEBUG_LOGGING) System.out.println("TYPE1 max cap updated: " + type1MaxCap);
+            System.out.println("TYPE1 max cap updated: " + type1MaxCap);
         }
         
         // Check for Boss spawn at 3.5 minutes
@@ -332,7 +329,7 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         if (!bossSpawned && System.currentTimeMillis() - lastEnemySpawn > enemySpawnRate) {
             spawnEnemy();
             lastEnemySpawn = System.currentTimeMillis();
-            if (ENABLE_DEBUG_LOGGING) System.out.println("Enemy spawned! Total enemies: " + enemies.size());
+            System.out.println("Enemy spawned! Total enemies: " + enemies.size());
         }
         
         // Update enemies
@@ -344,7 +341,7 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
             // Remove if off screen
             if (enemy.isOffScreen(SCREEN_WIDTH, SCREEN_HEIGHT, cameraX, cameraY)) {
                 enemyIterator.remove();
-                if (ENABLE_DEBUG_LOGGING) System.out.println("Enemy removed (off screen). Total enemies: " + enemies.size());
+                System.out.println("Enemy removed (off screen). Total enemies: " + enemies.size());
             }
             
             // Check collision with player
@@ -352,10 +349,10 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                 // consumeDamage respects shield first
                 player.consumeDamage(10);
                 enemyIterator.remove();
-                if (ENABLE_DEBUG_LOGGING) System.out.println("Player hit! Health: " + player.getHealth());
+                System.out.println("Player hit! Health: " + player.getHealth());
                 
                 if (player.getHealth() <= 0) {
-                    if (ENABLE_DEBUG_LOGGING) System.out.println("Game Over! Final Score: " + score);
+                    System.out.println("Game Over! Final Score: " + score);
                     gameRunning = false;
                     // ลบ Player2 ออกเมื่อ Game Over
                     if (coopMode && player2 != null) {
@@ -382,10 +379,13 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
             // Remove if expired (1 minute)
             if (bullet.isExpired()) {
                 bulletIterator.remove();
-                if (ENABLE_DEBUG_LOGGING) System.out.println("Bullet expired! Total bullets: " + bullets.size());
+                System.out.println("Bullet expired! Total bullets: " + bullets.size());
                 continue;
             }
-            
+
+            // Track whether this bullet was removed during collision handling
+            boolean bulletRemoved = false;
+
             // Check bullet-enemy collision
             Iterator<Enemy> enemyIterator2 = enemies.iterator();
             while (enemyIterator2.hasNext()) {
@@ -395,33 +395,37 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                     enemy.takeDamage(dmg);
                     damagePopups.add(new DamagePopup(enemy.getX(), enemy.getY(), dmg, Color.YELLOW));
                     bulletIterator.remove();
-                    
+                    bulletRemoved = true;
+
                     if (enemy.isDead()) {
                         enemyIterator2.remove();
                         score += 10;
-                        if (ENABLE_DEBUG_LOGGING) System.out.println("Enemy destroyed! Score: " + score);
-                        
+                        System.out.println("Enemy destroyed! Score: " + score);
+
                         // Chance to spawn power-up
                         if (random.nextInt(10) == 0) {
                             powerUps.add(new PowerUp(enemy.getX(), enemy.getY()));
                         }
                     } else {
-                        if (ENABLE_DEBUG_LOGGING) System.out.println("Enemy hit! HP: " + enemy.getHealth() + "/" + enemy.getMaxHealth());
+                        System.out.println("Enemy hit! HP: " + enemy.getHealth() + "/" + enemy.getMaxHealth());
                     }
                     break;
                 }
             }
-            
+
+            // If bullet was removed due to colliding with an enemy, skip further processing for this bullet
+            if (bulletRemoved) continue;
+
             // Check bullet-boss collision
             if (boss != null && !boss.isDead() && bullet.collidesWith(boss)) {
                 int dmg = bullet.getDamage();
                 boss.takeDamage(dmg);
                 damagePopups.add(new DamagePopup(boss.getX(), boss.getY(), dmg, Color.RED));
                 bulletIterator.remove();
-                if (ENABLE_DEBUG_LOGGING) System.out.println("Boss hit! HP: " + boss.getHealth() + "/" + boss.getMaxHealth());
-                
+                System.out.println("Boss hit! HP: " + boss.getHealth() + "/" + boss.getMaxHealth());
+
                 if (boss.isDead()) {
-                    if (ENABLE_DEBUG_LOGGING) System.out.println("=== BOSS DEFEATED ===");
+                    System.out.println("=== BOSS DEFEATED ===");
                     // Deactivate all boss lasers
                     for (BossLaser laser : bossLasers) {
                         laser.deactivate();
@@ -481,7 +485,7 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                     bullet2Iterator.remove();
                     
                     if (boss.isDead()) {
-                        if (ENABLE_DEBUG_LOGGING) System.out.println("=== BOSS DEFEATED (by Player2) ===");
+                        System.out.println("=== BOSS DEFEATED (by Player2) ===");
                         // Deactivate all boss lasers
                         for (BossLaser laser : bossLasers) {
                             laser.deactivate();
@@ -508,7 +512,7 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
             // Remove if expired (1 minute)
             if (enemyBullet.isExpired()) {
                 enemyBulletIterator.remove();
-                if (ENABLE_DEBUG_LOGGING) System.out.println("Enemy bullet expired! Total enemy bullets: " + enemyBullets.size());
+                System.out.println("Enemy bullet expired! Total enemy bullets: " + enemyBullets.size());
                 continue;
             }
             
@@ -518,10 +522,10 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                 player.consumeDamage(dmg);
                 damagePopups.add(new DamagePopup(player.getX(), player.getY(), dmg, Color.RED));
                 enemyBulletIterator.remove();
-                if (ENABLE_DEBUG_LOGGING) System.out.println("Player hit by bullet! Health: " + player.getHealth() + " (damage: " + dmg + ")");
+                System.out.println("Player hit by bullet! Health: " + player.getHealth() + " (damage: " + dmg + ")");
                 
                 if (player.getHealth() <= 0) {
-                    if (ENABLE_DEBUG_LOGGING) System.out.println("Game Over! Final Score: " + score);
+                    System.out.println("Game Over! Final Score: " + score);
                     gameRunning = false;
                     // ลบ Player2 ออกเมื่อ Game Over
                     if (coopMode && player2 != null) {
@@ -538,11 +542,11 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                 player.consumeDamage(dmg); // หัก HP จาก Player1 (ใช้เลือดร่วมกัน)
                 damagePopups.add(new DamagePopup(player2.getX(), player2.getY(), dmg, Color.RED));
                 enemyBulletIterator.remove();
-                if (ENABLE_DEBUG_LOGGING) System.out.println("Player2 hit by bullet! Shared Health: " + player.getHealth() + " (damage: " + dmg + ")");
+                System.out.println("Player2 hit by bullet! Shared Health: " + player.getHealth() + " (damage: " + dmg + ")");
                 
                 if (player.getHealth() <= 0) {
                     // เลือดหมด = Game Over
-                    if (ENABLE_DEBUG_LOGGING) System.out.println("Game Over! Final Score: " + score);
+                    System.out.println("Game Over! Final Score: " + score);
                     gameRunning = false;
                     // ลบ Player2 ออก
                     player2 = null;
@@ -572,10 +576,10 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                     player.consumeDamage(damage);
                     damagePopups.add(new DamagePopup(player.getX(), player.getY(), damage, Color.RED)); // สีเดียวกับศัตรู
                     lastBossCollisionDamage = currentTime;
-                    if (ENABLE_DEBUG_LOGGING) System.out.println("Player hit by Boss collision! Damage: " + damage + " Health: " + player.getHealth());
+                    System.out.println("Player hit by Boss collision! Damage: " + damage + " Health: " + player.getHealth());
                     
                     if (player.getHealth() <= 0) {
-                        if (ENABLE_DEBUG_LOGGING) System.out.println("Game Over! Final Score: " + score);
+                        System.out.println("Game Over! Final Score: " + score);
                         gameRunning = false;
                         // ลบ Player2 ออกเมื่อ Game Over
                         if (coopMode && player2 != null) {
@@ -597,10 +601,10 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                 player.consumeDamage(bullet.getDamage());
                 damagePopups.add(new DamagePopup(player.getX(), player.getY(), bullet.getDamage(), Color.RED)); // สีเดียวกับศัตรู
                 bossBulletIterator.remove();
-                if (ENABLE_DEBUG_LOGGING) System.out.println("Player hit by boss bullet! Health: " + player.getHealth());
+                System.out.println("Player hit by boss bullet! Health: " + player.getHealth());
                 
                 if (player.getHealth() <= 0) {
-                    if (ENABLE_DEBUG_LOGGING) System.out.println("Game Over! Final Score: " + score);
+                    System.out.println("Game Over! Final Score: " + score);
                     gameRunning = false;
                     // ลบ Player2 ออกเมื่อ Game Over
                     if (coopMode && player2 != null) {
@@ -628,10 +632,10 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                         player.consumeDamage(damage);
                         damagePopups.add(new DamagePopup(player.getX(), player.getY(), damage, Color.RED)); // สีเดียวกับศัตรู
                         lastBossLaserDamage = currentTime;
-                        if (ENABLE_DEBUG_LOGGING) System.out.println("Player hit by boss laser! Damage: " + damage + " Health: " + player.getHealth());
+                        System.out.println("Player hit by boss laser! Damage: " + damage + " Health: " + player.getHealth());
                         
                         if (player.getHealth() <= 0) {
-                            if (ENABLE_DEBUG_LOGGING) System.out.println("Game Over! Final Score: " + score);
+                            System.out.println("Game Over! Final Score: " + score);
                             gameRunning = false;
                             // ลบ Player2 ออกเมื่อ Game Over
                             if (coopMode && player2 != null) {
@@ -652,10 +656,10 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                     int dmg = laser.getDamage();
                     player.consumeDamage(dmg);
                     damagePopups.add(new DamagePopup(player.getX(), player.getY(), dmg, Color.ORANGE));
-                    if (ENABLE_DEBUG_LOGGING) System.out.println("Player hit by laser! Health: " + player.getHealth() + " (damage: " + dmg + ")");
+                    System.out.println("Player hit by laser! Health: " + player.getHealth() + " (damage: " + dmg + ")");
                     
                     if (player.getHealth() <= 0) {
-                        if (ENABLE_DEBUG_LOGGING) System.out.println("Game Over! Final Score: " + score);
+                        System.out.println("Game Over! Final Score: " + score);
                         gameRunning = false;
                         // ลบ Player2 ออกเมื่อ Game Over
                         if (coopMode && player2 != null) {
@@ -717,7 +721,7 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         if (System.currentTimeMillis() - player.getLastShotTime() > currentFireRate) {
             shootBullet();
             player.setLastShotTime(System.currentTimeMillis());
-            if (ENABLE_DEBUG_LOGGING) System.out.println("Bullet fired! Total bullets: " + bullets.size());
+            System.out.println("Bullet fired! Total bullets: " + bullets.size());
         }
         
         // Player2 auto-shoot (if co-op mode active) - ยิงอัตโนมัติเหมือน player1
@@ -738,11 +742,19 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         while (powerUpIterator.hasNext()) {
             PowerUp powerUp = powerUpIterator.next();
             
+            // Check collision with player1
             if (powerUp.collidesWith(player)) {
-                applyPowerUp(powerUp);
+                applyPowerUp(powerUp, player);
                 powerUpIterator.remove();
-                if (ENABLE_DEBUG_LOGGING) System.out.println("Power-up collected: " + powerUp.getType());
-            } else if (powerUp.isExpired()) {
+                System.out.println("Player 1 collected power-up: " + powerUp.getType());
+            } 
+            // Check collision with player2 (co-op mode)
+            else if (coopMode && player2 != null && powerUp.collidesWith(player2)) {
+                applyPowerUp(powerUp, player2);
+                powerUpIterator.remove();
+                System.out.println("Player 2 collected power-up: " + powerUp.getType());
+            } 
+            else if (powerUp.isExpired()) {
                 powerUpIterator.remove();
             }
         }
@@ -752,7 +764,7 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         int newLevel = (int) (currentElapsed / 20000) + 1; // New level every 20 seconds
         if (newLevel > level) {
             level = newLevel;
-            if (ENABLE_DEBUG_LOGGING) System.out.println("Level up! Now at level: " + level);
+            System.out.println("Level up! Now at level: " + level);
         }
         enemySpawnRate = Math.max(200, 1000 - (level * 100)); // Faster spawning over time
     }
@@ -867,7 +879,7 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                     
                     boss.resetBarrageTimer();
                     boss.incrementBarrageShots();
-                    if (ENABLE_DEBUG_LOGGING) System.out.println("Boss barrage shot #" + boss.getBarrageShots());
+                    System.out.println("Boss barrage shot #" + boss.getBarrageShots());
                 }
                 break;
                 
@@ -890,7 +902,7 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                     
                     // Random rotation direction
                     laserRotationDirection = random.nextBoolean() ? 1.0 : -1.0;
-                    if (ENABLE_DEBUG_LOGGING) System.out.println("Boss lasers created, rotation: " + (laserRotationDirection > 0 ? "clockwise" : "counter-clockwise"));
+                    System.out.println("Boss lasers created, rotation: " + (laserRotationDirection > 0 ? "clockwise" : "counter-clockwise"));
                     bossLasersCreated = true;
                 }
                 
@@ -926,7 +938,7 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                         ));
                     }
                     lastHomingBulletSpawn = currentTime;
-                    if (ENABLE_DEBUG_LOGGING) System.out.println("Boss fired 3 homing bullets!");
+                    System.out.println("Boss fired 3 homing bullets!");
                 }
                 break;
         }
@@ -987,12 +999,12 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
             int playerSpriteH = player.getHeight() * 2;
             Enemy spawned = new Enemy(x, y, type, playerSpriteW, playerSpriteH);
             enemies.add(spawned);
-            if (ENABLE_DEBUG_LOGGING) System.out.println("Spawned enemy type=" + type + " size=" + spawned.getWidth() + "x" + spawned.getHeight() + " (TYPE1 count: " + (type == Enemy.EnemyType.TYPE1 ? type1Count + 1 : type1Count) + "/" + type1MaxCap + ")");
+            System.out.println("Spawned enemy type=" + type + " size=" + spawned.getWidth() + "x" + spawned.getHeight() + " (TYPE1 count: " + (type == Enemy.EnemyType.TYPE1 ? type1Count + 1 : type1Count) + "/" + type1MaxCap + ")");
         }
     }
     
     private void spawnBoss() {
-        if (ENABLE_DEBUG_LOGGING) System.out.println("=== BOSS SPAWNED ===");
+        System.out.println("=== BOSS SPAWNED ===");
         // Spawn boss near player
         int spawnX = (int)(player.getX() + 200 + random.nextDouble() * 300); // ด้านขวา player 200-500 px
         int spawnY = (int)(player.getY() - 200 + random.nextDouble() * 400); // บนหรือล่าง player ±200 px
@@ -1023,12 +1035,12 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
             player2 = new Player((int)player.getX() - 50, (int)player.getY(), 
                                 p1Type, p2HP, p2Speed, p2Firerate);
             
-            if (ENABLE_DEBUG_LOGGING) System.out.println("Co-op mode: ON (Player 2 created with same stats as Player 1)");
+            System.out.println("Co-op mode: ON (Player 2 created with same stats as Player 1)");
         } else {
             // ปิด co-op mode: รวม player2 กลับเข้า player1
             player2 = null;
             bullets2.clear();
-            if (ENABLE_DEBUG_LOGGING) System.out.println("Co-op mode: OFF (Player 2 removed)");
+            System.out.println("Co-op mode: OFF (Player 2 removed)");
         }
     }
     
@@ -1047,7 +1059,7 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         int type1Count = 0;
         int maxType1 = 2;
         
-        if (ENABLE_DEBUG_LOGGING) System.out.println("Boss spawning " + totalEnemies + " enemies!");
+        System.out.println("Boss spawning " + totalEnemies + " enemies!");
         
         for (int i = 0; i < totalEnemies; i++) {
             // สุ่มประเภท (0=TYPE1, 1=TYPE2, 2=TYPE3)
@@ -1086,7 +1098,7 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
             enemies.add(new Enemy(spawnX, spawnY, type));
         }
         
-        if (ENABLE_DEBUG_LOGGING) System.out.println("Spawned: TYPE1=" + type1Count + ", Total=" + totalEnemies);
+        System.out.println("Spawned: TYPE1=" + type1Count + ", Total=" + totalEnemies);
     }
     
     private void shootEnemyBullets(Enemy enemy) {
@@ -1099,12 +1111,12 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
             case TYPE1:
                 // Start laser charging
                 enemy.startLaser(px, py);
-                if (ENABLE_DEBUG_LOGGING) System.out.println("Enemy TYPE1 started laser charging!");
+                System.out.println("Enemy TYPE1 started laser charging!");
                 break;
             case TYPE3:
                 // Shoot 1 bullet toward player
                 enemyBullets.add(new EnemyBullet(ex, ey, px, py));
-                if (ENABLE_DEBUG_LOGGING) System.out.println("Enemy TYPE3 fired 1 bullet! Total: " + enemyBullets.size());
+                System.out.println("Enemy TYPE3 fired 1 bullet! Total: " + enemyBullets.size());
                 break;
                 
             case TYPE2:
@@ -1113,15 +1125,12 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                     double angle = (Math.PI * 2.0 / 6.0) * i;
                     enemyBullets.add(new EnemyBullet(ex, ey, angle, px, py));
                 }
-                if (ENABLE_DEBUG_LOGGING) System.out.println("Enemy TYPE2 fired 6 bullets! Total: " + enemyBullets.size());
+                System.out.println("Enemy TYPE2 fired 6 bullets! Total: " + enemyBullets.size());
                 break;
         }
     }
     
     private void shootBullet() {
-        // Play bullet sound effect
-        playBulletSound();
-        
         if (manualControlMode) {
             // Manual mode: shoot in facing direction with 1.5x damage
             double fireAngle = player.getFacingAngle();
@@ -1130,6 +1139,8 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
             Bullet bullet = new Bullet(player.getX(), player.getY(), fireAngle, fireSpeed, damageMultiplier);
             bullet.setColor(new Color(0, 191, 255)); // สีฟ้า (Deep Sky Blue - RGB)
             bullets.add(bullet);
+            // Play sound after creating bullet
+            playBulletSound();
         } else {
             // Auto mode: aim at nearest target (enemy or boss)
             Object nearestTarget = null;
@@ -1177,15 +1188,14 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                 Bullet bullet = new Bullet(player.getX(), player.getY(), fireAngle, fireSpeed);
                 bullet.setColor(new Color(0, 191, 255)); // สีฟ้า (Deep Sky Blue - RGB)
                 bullets.add(bullet);
+                // Play sound after creating bullet
+                playBulletSound();
             }
         }
     }
     
     private void shootBulletPlayer2() {
         if (player2 == null) return;
-        
-        // Play bullet sound effect
-        playBulletSound();
         
         // Player2 always uses auto-aim (same as player1 in auto mode)
         Object nearestTarget = null;
@@ -1233,19 +1243,21 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
             Bullet bullet = new Bullet(player2.getX(), player2.getY(), fireAngle, fireSpeed);
             bullet.setColor(new Color(255, 38, 71)); // สีแดงออกชมพู (RGB)
             bullets2.add(bullet);
+            // Play sound after creating bullet
+            playBulletSound();
         }
     }
     
-    private void applyPowerUp(PowerUp powerUp) {
+    private void applyPowerUp(PowerUp powerUp, Player targetPlayer) {
         switch (powerUp.getType()) {
             case HEALTH:
-                player.heal(20);
+                targetPlayer.heal(20);
                 break;
             case SPEED:
-                player.increaseSpeed(1);
+                targetPlayer.increaseSpeed(1);
                 break;
             case FIRE_RATE:
-                player.increaseFireRate(50);
+                targetPlayer.increaseFireRate(50);
                 break;
         }
     }
@@ -1254,15 +1266,7 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
     protected void paintComponent(Graphics g) {
         super.paintComponent(g);
         Graphics2D g2d = (Graphics2D) g;
-        
-        // Only enable antialiasing if flag is set (better performance when disabled)
-        if (ENABLE_ANTIALIASING) {
-            g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-        }
-        
-        // Performance hint: prefer speed over quality
-        g2d.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_SPEED);
-        g2d.setRenderingHint(RenderingHints.KEY_COLOR_RENDERING, RenderingHints.VALUE_COLOR_RENDER_SPEED);
+        g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
         
         // Apply scaling and centering if in fullscreen mode
         if (fullscreen) {
@@ -1475,148 +1479,165 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         g2d.setColor(Color.WHITE);
         g2d.setFont(new Font("Arial", Font.BOLD, 16));
         
-        // ========== Player 1 UI (Left Side) ==========
-        g2d.drawString("Score: " + score, 10, 25);
-        g2d.drawString("Level: " + level, 10, 45);
-        g2d.drawString("Health: " + player.getHealth(), 10, 65);
+        if (coopMode && player2 != null) {
+            // Co-op mode: แสดง UI ทั้ง 2 players แบบเหมือนกัน
+            // Player 1 UI - ซ้ายบน
+            drawPlayerUI(g2d, player, 10, true, "Player 1 (WASD)", "F");
+            
+            // Player 2 UI - ขวาบน (copy มาจาก Player 1)
+            drawPlayerUI(g2d, player2, SCREEN_WIDTH - 220, false, "Player 2 (Arrows)", "R-Shift");
+            
+            // Timer countdown (กลาง) - 3.5 minutes = 210 seconds
+            long elapsedMs = System.currentTimeMillis() - gameStartTime;
+            long remainingMs = Math.max(0, BOSS_SPAWN_TIME - elapsedMs);
+            int remainingSeconds = (int)(remainingMs / 1000);
+            int minutes = remainingSeconds / 60;
+            int seconds = remainingSeconds % 60;
+            
+            if (!bossSpawned) {
+                g2d.setColor(Color.CYAN);
+                g2d.setFont(new Font("Arial", Font.BOLD, 18));
+                String timerText = String.format("Boss in: %d:%02d", minutes, seconds);
+                g2d.drawString(timerText, SCREEN_WIDTH / 2 - 70, 25);
+            } else {
+                g2d.setColor(Color.RED);
+                g2d.setFont(new Font("Arial", Font.BOLD, 18));
+                g2d.drawString("BOSS FIGHT!", SCREEN_WIDTH / 2 - 60, 25);
+            }
+        } else {
+            // Solo mode: แสดง UI แบบเดิม
+            // ข้อมูลด้านซ้ายบน (Player 1)
+            g2d.drawString("Score: " + score, 10, 25);
+            g2d.drawString("Level: " + level, 10, 45);
+            g2d.drawString("Health: " + player.getHealth(), 10, 65);
+            
+            // Timer countdown (3.5 minutes = 210 seconds)
+            long elapsedMs = System.currentTimeMillis() - gameStartTime;
+            long remainingMs = Math.max(0, BOSS_SPAWN_TIME - elapsedMs);
+            int remainingSeconds = (int)(remainingMs / 1000);
+            int minutes = remainingSeconds / 60;
+            int seconds = remainingSeconds % 60;
+            
+            if (!bossSpawned) {
+                g2d.setColor(Color.CYAN);
+                g2d.setFont(new Font("Arial", Font.BOLD, 18));
+                String timerText = String.format("Boss in: %d:%02d", minutes, seconds);
+                g2d.drawString(timerText, SCREEN_WIDTH / 2 - 70, 25);
+            } else {
+                g2d.setColor(Color.RED);
+                g2d.setFont(new Font("Arial", Font.BOLD, 18));
+                g2d.drawString("BOSS FIGHT!", SCREEN_WIDTH / 2 - 60, 25);
+            }
+            g2d.setFont(new Font("Arial", Font.BOLD, 16));
+            g2d.setColor(Color.WHITE);
+            
+            // Health bar (scale based on player's max health)
+            int hbX = 10;
+            int hbY = 75;
+            int hbW = 200;
+            int hbH = 10;
+            g2d.setColor(Color.RED);
+            int healthW = (int) Math.round(((double)player.getHealth() / (double)player.getMaxHealth()) * hbW);
+            g2d.fillRect(hbX, hbY, healthW, hbH);
+            g2d.setColor(Color.WHITE);
+            g2d.drawRect(hbX, hbY, hbW, hbH);
+
+            // Shield bar (draw only while shield currently > 0)
+            if (player.getShieldCurrent() > 0 && player.getShieldMax() > 0) {
+                int sx = 10;
+                int sy = 90;
+                int sw = 200;
+                int sh = 8;
+                g2d.setColor(Color.BLUE);
+                int shieldW = (int) Math.round(((double)player.getShieldCurrent() / (double)player.getShieldMax()) * sw);
+                g2d.fillRect(sx, sy, shieldW, sh);
+                g2d.setColor(Color.WHITE);
+                g2d.drawRect(sx, sy, sw, sh);
+                g2d.setFont(new Font("Arial", Font.PLAIN, 12));
+                g2d.drawString("Shield: " + player.getShieldCurrent() + "/" + player.getShieldMax(), sx + sw + 6, sy + sh);
+            }
+
+            // Special cooldown display
+            long lastUse = player.getLastSpecialUseTime();
+            long cd = player.getSpecialCooldownMs();
+            long now = System.currentTimeMillis();
+            long remaining = Math.max(0, cd - (now - lastUse));
+            int cooldownSeconds = (int) Math.ceil(remaining / 1000.0);
+            g2d.setFont(new Font("Arial", Font.PLAIN, 14));
+            g2d.setColor(remaining > 0 ? Color.GRAY : Color.GREEN);
+            g2d.drawString("Special (F): " + (remaining > 0 ? (cooldownSeconds + "s") : "Ready"), 10, 115);
+            
+            // Manual mode indicator
+            if (manualControlMode) {
+                g2d.setColor(Color.YELLOW);
+                g2d.setFont(new Font("Arial", Font.BOLD, 16));
+                g2d.drawString("MANUAL MODE", 10, 140);
+                g2d.setFont(new Font("Arial", Font.PLAIN, 12));
+                g2d.setColor(Color.ORANGE);
+                g2d.drawString("WASD: Move | Arrows: Aim", 10, 155);
+                g2d.drawString("Damage x1.5 | Fire Rate x1.5", 10, 170);
+            } else {
+                g2d.setColor(Color.CYAN);
+                g2d.setFont(new Font("Arial", Font.PLAIN, 12));
+                g2d.drawString("Press M for Manual Mode", 10, 140);
+            }
+        }
+    }
+    
+    // Helper method to draw UI for one player
+    private void drawPlayerUI(Graphics2D g2d, Player p, int startX, boolean isLeft, String playerName, String specialKey) {
+        Color mainColor = isLeft ? Color.WHITE : new Color(255, 105, 180); // ขาว หรือ ชมพู
+        Color healthBarColor = isLeft ? Color.RED : new Color(255, 50, 100);
+        Color shieldBarColor = Color.BLUE;
+        Color specialReadyColor = Color.GREEN;
         
-        // Health bar (scale based on player's max health)
-        int hbX = 10;
-        int hbY = 75;
+        g2d.setColor(mainColor);
+        g2d.setFont(new Font("Arial", Font.BOLD, 16));
+        
+        // Player name & stats
+        g2d.drawString(playerName, startX, 25);
+        g2d.drawString("Score: " + score, startX, 45);
+        g2d.drawString("Level: " + level, startX, 65);
+        g2d.drawString("HP: " + p.getHealth() + "/" + p.getMaxHealth(), startX, 85);
+        
+        // Health bar
+        int hbX = startX;
+        int hbY = 95;
         int hbW = 200;
         int hbH = 10;
-        g2d.setColor(Color.RED);
-        int healthW = (int) Math.round(((double)player.getHealth() / (double)player.getMaxHealth()) * hbW);
+        g2d.setColor(healthBarColor);
+        int healthW = (int) Math.round(((double)p.getHealth() / (double)p.getMaxHealth()) * hbW);
         g2d.fillRect(hbX, hbY, healthW, hbH);
-        g2d.setColor(Color.WHITE);
+        g2d.setColor(mainColor);
         g2d.drawRect(hbX, hbY, hbW, hbH);
-
-        // Shield bar (draw only while shield currently > 0)
-        if (player.getShieldCurrent() > 0 && player.getShieldMax() > 0) {
-            int sx = 10;
-            int sy = 90;
+        
+        // Shield bar (if active)
+        if (p.getShieldCurrent() > 0 && p.getShieldMax() > 0) {
+            int sx = startX;
+            int sy = 110;
             int sw = 200;
             int sh = 8;
-            g2d.setColor(Color.BLUE);
-            int shieldW = (int) Math.round(((double)player.getShieldCurrent() / (double)player.getShieldMax()) * sw);
+            g2d.setColor(shieldBarColor);
+            int shieldW = (int) Math.round(((double)p.getShieldCurrent() / (double)p.getShieldMax()) * sw);
             g2d.fillRect(sx, sy, shieldW, sh);
-            g2d.setColor(Color.WHITE);
+            g2d.setColor(mainColor);
             g2d.drawRect(sx, sy, sw, sh);
             g2d.setFont(new Font("Arial", Font.PLAIN, 12));
-            g2d.drawString("Shield: " + player.getShieldCurrent() + "/" + player.getShieldMax(), sx, sy + sh + 12);
+            g2d.drawString("Shield: " + p.getShieldCurrent() + "/" + p.getShieldMax(), sx, sy + sh + 12);
         }
-
-        // Special cooldown display
-        long lastUse = player.getLastSpecialUseTime();
-        long cd = player.getSpecialCooldownMs();
+        
+        // Special cooldown
+        long lastUse = p.getLastSpecialUseTime();
+        long cd = p.getSpecialCooldownMs();
         long now = System.currentTimeMillis();
         long remaining = Math.max(0, cd - (now - lastUse));
         int cooldownSeconds = (int) Math.ceil(remaining / 1000.0);
         g2d.setFont(new Font("Arial", Font.PLAIN, 14));
-        g2d.setColor(remaining > 0 ? Color.GRAY : Color.GREEN);
-        g2d.drawString("Special (F): " + (remaining > 0 ? (cooldownSeconds + "s") : "Ready"), 10, 115);
+        g2d.setColor(remaining > 0 ? Color.GRAY : specialReadyColor);
+        int specialY = (p.getShieldCurrent() > 0) ? 135 : 125;
+        g2d.drawString("Special (" + specialKey + "): " + (remaining > 0 ? (cooldownSeconds + "s") : "Ready"), startX, specialY);
         
-        // ========== Player 2 UI (Right Side - Mirror of Player 1) ==========
-        if (coopMode && player2 != null) {
-            int p2StartX = SCREEN_WIDTH - 220;
-            
-            g2d.setColor(new Color(255, 105, 180)); // Pink for Player 2
-            g2d.setFont(new Font("Arial", Font.BOLD, 16));
-            g2d.drawString("Player 2", p2StartX, 25);
-            g2d.setColor(Color.WHITE);
-            g2d.drawString("Level: " + level, p2StartX, 45); // Same level
-            g2d.drawString("Health: " + player.getHealth(), p2StartX, 65); // Shared health
-            
-            // Health bar for Player 2 (same as Player 1)
-            int p2HbX = p2StartX;
-            int p2HbY = 75;
-            int p2HbW = 200;
-            int p2HbH = 10;
-            g2d.setColor(Color.RED);
-            int p2HealthW = (int) Math.round(((double)player.getHealth() / (double)player.getMaxHealth()) * p2HbW);
-            g2d.fillRect(p2HbX, p2HbY, p2HealthW, p2HbH);
-            g2d.setColor(Color.WHITE);
-            g2d.drawRect(p2HbX, p2HbY, p2HbW, p2HbH);
-
-            // Shield bar for Player 2 (same as Player 1)
-            if (player.getShieldCurrent() > 0 && player.getShieldMax() > 0) {
-                int p2Sx = p2StartX;
-                int p2Sy = 90;
-                int p2Sw = 200;
-                int p2Sh = 8;
-                g2d.setColor(Color.BLUE);
-                int p2ShieldW = (int) Math.round(((double)player.getShieldCurrent() / (double)player.getShieldMax()) * p2Sw);
-                g2d.fillRect(p2Sx, p2Sy, p2ShieldW, p2Sh);
-                g2d.setColor(Color.WHITE);
-                g2d.drawRect(p2Sx, p2Sy, p2Sw, p2Sh);
-                g2d.setFont(new Font("Arial", Font.PLAIN, 12));
-                g2d.drawString("Shield: " + player.getShieldCurrent() + "/" + player.getShieldMax(), p2Sx, p2Sy + p2Sh + 12);
-            }
-
-            // Special cooldown for Player 2
-            long p2LastUse = player2.getLastSpecialUseTime();
-            long p2Cd = player2.getSpecialCooldownMs();
-            long p2Remaining = Math.max(0, p2Cd - (now - p2LastUse));
-            int p2CooldownSeconds = (int) Math.ceil(p2Remaining / 1000.0);
-            g2d.setFont(new Font("Arial", Font.PLAIN, 14));
-            g2d.setColor(p2Remaining > 0 ? Color.GRAY : Color.GREEN);
-            g2d.drawString("Special (R-Shift): " + (p2Remaining > 0 ? (p2CooldownSeconds + "s") : "Ready"), p2StartX, 115);
-            
-            g2d.setColor(Color.WHITE);
-        }
-        
-        // ========== Center Timer ==========
-        // Timer countdown (3.5 minutes = 210 seconds)
-        long elapsedMs = System.currentTimeMillis() - gameStartTime;
-        long remainingMs = Math.max(0, BOSS_SPAWN_TIME - elapsedMs);
-        int remainingSeconds = (int)(remainingMs / 1000);
-        int minutes = remainingSeconds / 60;
-        int seconds = remainingSeconds % 60;
-        
-        if (!bossSpawned) {
-            g2d.setColor(Color.CYAN);
-            g2d.setFont(new Font("Arial", Font.BOLD, 18));
-            String timerText = String.format("Boss in: %d:%02d", minutes, seconds);
-            g2d.drawString(timerText, SCREEN_WIDTH / 2 - 70, 25);
-        } else {
-            g2d.setColor(Color.RED);
-            g2d.setFont(new Font("Arial", Font.BOLD, 18));
-            g2d.drawString("BOSS FIGHT!", SCREEN_WIDTH / 2 - 60, 25);
-        }
-        g2d.setFont(new Font("Arial", Font.BOLD, 16));
         g2d.setColor(Color.WHITE);
-        
-        // ========== Mode Indicators (Bottom Left) ==========
-        // Manual mode indicator
-        if (manualControlMode) {
-            g2d.setColor(Color.YELLOW);
-            g2d.setFont(new Font("Arial", Font.BOLD, 16));
-            g2d.drawString("MANUAL MODE", 10, 140);
-            g2d.setFont(new Font("Arial", Font.PLAIN, 12));
-            g2d.setColor(Color.ORANGE);
-            g2d.drawString("WASD: Move | Arrows: Aim", 10, 155);
-            g2d.drawString("Damage x1.5 | Fire Rate x1.5", 10, 170);
-        } else {
-            // Auto-fire mode with instructions
-            g2d.setColor(Color.CYAN);
-            g2d.setFont(new Font("Arial", Font.BOLD, 14));
-            g2d.drawString("AUTO-FIRE MODE", 10, 140);
-            g2d.setFont(new Font("Arial", Font.PLAIN, 12));
-            g2d.setColor(Color.LIGHT_GRAY);
-            g2d.drawString("Press M for Manual Mode", 10, 155);
-            g2d.drawString("Press J for Co-op Mode", 10, 170);
-        }
-        
-        // Co-op mode indicator (shared stats info)
-        if (coopMode) {
-            g2d.setColor(new Color(255, 200, 100)); // Orange-yellow
-            g2d.setFont(new Font("Arial", Font.BOLD, 14));
-            g2d.drawString("CO-OP MODE ACTIVE", 10, 195);
-            g2d.setFont(new Font("Arial", Font.PLAIN, 12));
-            g2d.setColor(new Color(255, 255, 150)); // Light yellow
-            g2d.drawString("Health & Stats Shared!", 10, 210);
-            g2d.drawString("Press J to exit Co-op", 10, 225);
-        }
     }
     
     private void drawMainMenu(Graphics2D g2d) {
@@ -1882,12 +1903,12 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
             if (keySequence.endsWith(SECRET_CODE_SPECIAL)) {
                 saveEasterEggMode(1);
                 playBGM(); // Restart BGM with special mode
-                if (ENABLE_DEBUG_LOGGING) System.out.println("Special mode activated! (drifx entered)");
+                System.out.println("Special mode activated! (drifx entered)");
                 keySequence = ""; // Reset
             } else if (keySequence.endsWith(SECRET_CODE_NORMAL)) {
                 saveEasterEggMode(0);
                 playBGM(); // Restart BGM with normal mode
-                if (ENABLE_DEBUG_LOGGING) System.out.println("Normal mode activated! (brex entered)");
+                System.out.println("Normal mode activated! (brex entered)");
                 keySequence = ""; // Reset
             }
         }
@@ -2023,6 +2044,7 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                 // Game over - return to main menu
                 currentState = GameState.MENU;
                 selectedMenuOption = 0;
+                isInGameBGM = false; // Exit in-game BGM mode
                 playBGM(); // Play menu BGM when returning from game over
                 return;
             } else {
@@ -2045,7 +2067,7 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
             if (!manualControlMode) {
                 toggleCoopMode();
             } else {
-                if (ENABLE_DEBUG_LOGGING) System.out.println("Cannot enter Co-op mode from Manual mode! Press M to switch to Auto mode first.");
+                System.out.println("Cannot enter Co-op mode from Manual mode! Press M to switch to Auto mode first.");
             }
             return;
         }
@@ -2066,9 +2088,9 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         if (key == KeyEvent.VK_M) {
             if (!coopMode) {
                 manualControlMode = !manualControlMode;
-                if (ENABLE_DEBUG_LOGGING) System.out.println("Manual control mode: " + (manualControlMode ? "ON" : "OFF"));
+                System.out.println("Manual control mode: " + (manualControlMode ? "ON" : "OFF"));
             } else {
-                if (ENABLE_DEBUG_LOGGING) System.out.println("Cannot enter Manual mode from Co-op mode! Press J to exit Co-op mode first.");
+                System.out.println("Cannot enter Manual mode from Co-op mode! Press J to exit Co-op mode first.");
             }
             return;
         }
@@ -2099,11 +2121,11 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
             if (key == KeyEvent.VK_LEFT) arrowLeftPressed = true;
             if (key == KeyEvent.VK_RIGHT) arrowRightPressed = true;
         } else {
-            // Auto mode (Solo): both WASD and arrows can move Player1
-            if (key == KeyEvent.VK_W || key == KeyEvent.VK_UP) upPressed = true;
-            if (key == KeyEvent.VK_S || key == KeyEvent.VK_DOWN) downPressed = true;
-            if (key == KeyEvent.VK_A || key == KeyEvent.VK_LEFT) leftPressed = true;
-            if (key == KeyEvent.VK_D || key == KeyEvent.VK_RIGHT) rightPressed = true;
+            // Auto mode (Solo): WASD only - arrow keys disabled
+            if (key == KeyEvent.VK_W) upPressed = true;
+            if (key == KeyEvent.VK_S) downPressed = true;
+            if (key == KeyEvent.VK_A) leftPressed = true;
+            if (key == KeyEvent.VK_D) rightPressed = true;
         }
         
         if (key == KeyEvent.VK_F) {
@@ -2144,7 +2166,8 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                     boss = null;
                     bossSpawned = false;
                     player = null;
-                    // Play menu BGM when returning to menu
+                    // Stop in-game BGM mode and play menu BGM
+                    isInGameBGM = false;
                     playBGM();
                     break;
             }
@@ -2202,6 +2225,11 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         
         // Reset manual mode
         manualControlMode = false;
+        
+        // Play in-game BGM
+        isInGameBGM = true;
+        isFirstGameBGM = true;
+        playInGameBGM();
     }
     
     @Override
@@ -2222,23 +2250,11 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         if (key == KeyEvent.VK_A) leftPressed = false;
         if (key == KeyEvent.VK_D) rightPressed = false;
         
-        // Release arrow keys (used for movement in auto mode, rotation in manual mode)
-        if (key == KeyEvent.VK_UP) {
-            upPressed = false;
-            arrowUpPressed = false;
-        }
-        if (key == KeyEvent.VK_DOWN) {
-            downPressed = false;
-            arrowDownPressed = false;
-        }
-        if (key == KeyEvent.VK_LEFT) {
-            leftPressed = false;
-            arrowLeftPressed = false;
-        }
-        if (key == KeyEvent.VK_RIGHT) {
-            rightPressed = false;
-            arrowRightPressed = false;
-        }
+        // Release arrow keys
+        if (key == KeyEvent.VK_UP) arrowUpPressed = false;
+        if (key == KeyEvent.VK_DOWN) arrowDownPressed = false;
+        if (key == KeyEvent.VK_LEFT) arrowLeftPressed = false;
+        if (key == KeyEvent.VK_RIGHT) arrowRightPressed = false;
     }
     
     @Override
@@ -2283,7 +2299,7 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                 reader.close();
                 if (line != null && line.trim().equals("1")) {
                     easterEggMode = 1;
-                    if (ENABLE_DEBUG_LOGGING) System.out.println("Special mode activated!");
+                    System.out.println("Special mode activated!");
                 } else {
                     easterEggMode = 0;
                 }
@@ -2292,7 +2308,7 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
             }
         } catch (IOException e) {
             easterEggMode = 0;
-            if (ENABLE_DEBUG_LOGGING) System.out.println("Could not load Easter egg mode: " + e.getMessage());
+            System.out.println("Could not load Easter egg mode: " + e.getMessage());
         }
     }
     
@@ -2302,43 +2318,46 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
             writer.write(String.valueOf(mode));
             writer.close();
             easterEggMode = mode;
-            if (ENABLE_DEBUG_LOGGING) System.out.println("Easter egg mode saved: " + mode);
+            System.out.println("Easter egg mode saved: " + mode);
         } catch (IOException e) {
-            if (ENABLE_DEBUG_LOGGING) System.out.println("Could not save Easter egg mode: " + e.getMessage());
+            System.out.println("Could not save Easter egg mode: " + e.getMessage());
         }
     }
     
     // Audio System Methods
     private void initializeAudio() {
         try {
-            // Pre-load bullet sound clips into pool for efficient reuse
-            File soundFile = new File("src/Sound/SFX/Laser Beam.wav");
-            if (!soundFile.exists()) {
-                soundFile = new File("bin/Sound/SFX/Laser Beam.wav");
-            }
+            // Pre-load sound effects pool for bullet sounds
+            String soundPath = "src/Sound/SFX/Laser Beam.wav";
+            File soundFile = new File(soundPath);
             
             if (soundFile.exists()) {
                 for (int i = 0; i < SFX_POOL_SIZE; i++) {
-                    AudioInputStream audioStream = AudioSystem.getAudioInputStream(soundFile);
-                    sfxPool[i] = AudioSystem.getClip();
-                    sfxPool[i].open(audioStream);
-                    
-                    // Set volume for this clip
                     try {
-                        FloatControl volumeControl = (FloatControl) sfxPool[i].getControl(FloatControl.Type.MASTER_GAIN);
-                        float dB = (float) (Math.log(sfxVolume / 100.0) * 20.0);
-                        dB = Math.max(volumeControl.getMinimum(), Math.min(dB, volumeControl.getMaximum()));
-                        volumeControl.setValue(dB);
+                        AudioInputStream audioStream = AudioSystem.getAudioInputStream(soundFile);
+                        sfxPool[i] = AudioSystem.getClip();
+                        sfxPool[i].open(audioStream);
+                        
+                        // Set volume for each clip
+                        if (sfxPool[i].isControlSupported(FloatControl.Type.MASTER_GAIN)) {
+                            FloatControl volumeControl = (FloatControl) sfxPool[i].getControl(FloatControl.Type.MASTER_GAIN);
+                            float dB = (float) (Math.log(sfxVolume / 100.0) * 20.0);
+                            dB = Math.max(volumeControl.getMinimum(), Math.min(dB, volumeControl.getMaximum()));
+                            volumeControl.setValue(dB);
+                        }
                     } catch (Exception e) {
-                        // Volume control not available
+                        System.out.println("Could not load SFX clip " + i + ": " + e.getMessage());
                     }
                 }
+                System.out.println("SFX pool initialized with " + SFX_POOL_SIZE + " clips");
+            } else {
+                System.out.println("SFX file not found: " + soundPath);
             }
             
             audioInitialized = true;
-            if (ENABLE_DEBUG_LOGGING) System.out.println("Audio system initialized with " + SFX_POOL_SIZE + " bullet sound clips");
+            System.out.println("Audio system initialized");
         } catch (Exception e) {
-            if (ENABLE_DEBUG_LOGGING) System.out.println("Audio system initialization failed: " + e.getMessage());
+            System.out.println("Audio system initialization failed: " + e.getMessage());
             audioInitialized = false;
         }
     }
@@ -2350,7 +2369,7 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
             // Stop current BGM if playing
             stopBGM();
             
-            // Determine which BGM to play based on Easter egg mode
+            // Determine which BGM to play based on Easter egg mode and game state
             String bgmPath;
             if (easterEggMode == 1) {
                 // Special mode - play dar_start.wav
@@ -2360,16 +2379,16 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                 if (!testFile.exists()) {
                     bgmPath = "bin/Sound/BMG/dar_start.wav";
                 }
-                if (ENABLE_DEBUG_LOGGING) System.out.println("Playing Special Mode BGM: dar_start.wav");
+                System.out.println("Playing Special Mode BGM: dar_start.wav");
             } else {
                 // Normal mode - play Start BGM.wav
                 bgmPath = "src/Sound/BMG/Start BGM.wav";
-                if (ENABLE_DEBUG_LOGGING) System.out.println("Playing Normal Mode BGM: Start BGM.wav");
+                System.out.println("Playing Normal Mode BGM: Start BGM.wav");
             }
             
             File bgmFile = new File(bgmPath);
             if (!bgmFile.exists()) {
-                if (ENABLE_DEBUG_LOGGING) System.out.println("BGM file not found: " + bgmPath);
+                System.out.println("BGM file not found: " + bgmPath);
                 return;
             }
             
@@ -2388,6 +2407,64 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
             
         } catch (Exception e) {
             System.out.println("Could not play BGM: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+    
+    private void playInGameBGM() {
+        if (!audioInitialized) return;
+        if (easterEggMode != 1) return; // Only for Easter egg mode
+        
+        try {
+            // Stop current BGM if playing
+            stopBGM();
+            
+            String bgmPath;
+            if (isFirstGameBGM) {
+                // First time: always play Dar_ingame.wav
+                bgmPath = "src/Sound/BMG/Dar_ingame.wav";
+                System.out.println("Playing first in-game BGM: Dar_ingame.wav");
+                isFirstGameBGM = false;
+            } else {
+                // After first song: randomly choose between Dar_ingame.wav and Dar_ingame2.wav
+                int choice = random.nextInt(2);
+                if (choice == 0) {
+                    bgmPath = "src/Sound/BMG/Dar_ingame.wav";
+                    System.out.println("Playing random in-game BGM: Dar_ingame.wav");
+                } else {
+                    bgmPath = "src/Sound/BMG/Dar_ingame2.wav";
+                    System.out.println("Playing random in-game BGM: Dar_ingame2.wav");
+                }
+            }
+            
+            File bgmFile = new File(bgmPath);
+            if (!bgmFile.exists()) {
+                System.out.println("In-game BGM file not found: " + bgmPath);
+                return;
+            }
+            
+            // Load and play WAV file
+            AudioInputStream audioStream = AudioSystem.getAudioInputStream(bgmFile);
+            bgmClip = AudioSystem.getClip();
+            bgmClip.open(audioStream);
+            
+            // Set volume
+            updateBGMVolume();
+            
+            // Add listener to play next random track when this one ends
+            bgmClip.addLineListener(event -> {
+                if (event.getType() == LineEvent.Type.STOP && isInGameBGM) {
+                    // Song ended - play next random track
+                    playInGameBGM();
+                }
+            });
+            
+            // Start playing (once - will loop via listener)
+            bgmClip.start();
+            System.out.println("In-game BGM started successfully");
+            
+        } catch (Exception e) {
+            System.out.println("Could not play in-game BGM: " + e.getMessage());
             e.printStackTrace();
         }
     }
@@ -2460,36 +2537,35 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
     }
     
     private void playBulletSound() {
-        if (!audioInitialized) return;
+        if (!audioInitialized || sfxPool == null) return;
         
         try {
-            // Use clip from pool (round-robin)
-            Clip clip = sfxPool[currentSfxIndex];
+            // Use round-robin pooling for non-blocking sound playback
+            Clip clip = sfxPool[sfxPoolIndex];
             
-            if (clip != null) {
-                // Stop if already playing, reset to beginning
+            if (clip != null && clip.isOpen()) {
+                // Stop and rewind the clip if it's playing
                 if (clip.isRunning()) {
                     clip.stop();
                 }
                 clip.setFramePosition(0);
                 
                 // Update volume in case it changed
-                try {
+                if (clip.isControlSupported(FloatControl.Type.MASTER_GAIN)) {
                     FloatControl volumeControl = (FloatControl) clip.getControl(FloatControl.Type.MASTER_GAIN);
                     float dB = (float) (Math.log(sfxVolume / 100.0) * 20.0);
                     dB = Math.max(volumeControl.getMinimum(), Math.min(dB, volumeControl.getMaximum()));
                     volumeControl.setValue(dB);
-                } catch (Exception e) {
-                    // Volume control not available
                 }
                 
+                // Play the sound
                 clip.start();
                 
-                // Move to next clip in pool
-                currentSfxIndex = (currentSfxIndex + 1) % SFX_POOL_SIZE;
+                // Move to next clip in pool (round-robin)
+                sfxPoolIndex = (sfxPoolIndex + 1) % SFX_POOL_SIZE;
             }
         } catch (Exception e) {
-            if (ENABLE_DEBUG_LOGGING) System.out.println("Could not play bullet sound: " + e.getMessage());
+            System.out.println("Could not play bullet sound from pool: " + e.getMessage());
         }
     }
 }
