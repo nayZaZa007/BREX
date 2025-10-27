@@ -48,7 +48,7 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
     // Boss
     private Boss boss;
     private boolean bossSpawned = false;
-    private static final long BOSS_SPAWN_TIME = 100000; // 3.5 minutes in milliseconds
+    private static final long BOSS_SPAWN_TIME = 10000; // 3.5 minutes in milliseconds
     
     // Boss attack system
     private ArrayList<BossBullet> bossBullets = new ArrayList<>();
@@ -442,12 +442,7 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         Iterator<Enemy> enemyIterator = enemies.iterator();
         while (enemyIterator.hasNext()) {
             Enemy enemy = enemyIterator.next();
-            // Update enemy targeting - consider player2 if in co-op mode
-            if (coopMode && player2 != null) {
-                enemy.update(player, player2);
-            } else {
-                enemy.update(player);
-            }
+            enemy.update(player);
             
             // Remove if off screen
             if (enemy.isOffScreen(SCREEN_WIDTH, SCREEN_HEIGHT, cameraX, cameraY)) {
@@ -470,20 +465,6 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                         player2 = null;
                         coopMode = false;
                     }
-                }
-            }
-            
-            // Check collision with player2 (co-op mode)
-            if (coopMode && player2 != null && enemy.collidesWith(player2)) {
-                player2.consumeDamage(10);
-                enemyIterator.remove();
-                System.out.println("Player 2 hit! Health: " + player2.getHealth());
-                
-                if (player2.getHealth() <= 0) {
-                    System.out.println("Player 2 destroyed!");
-                    player2 = null;
-                    coopMode = false;
-                    bullets2.clear();
                 }
             }
             
@@ -683,12 +664,7 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         
         // Update Boss
         if (boss != null && !boss.isDead()) {
-            // Update boss targeting - consider player2 if in co-op mode
-            if (coopMode && player2 != null) {
-                boss.update(player, player2, delta);
-            } else {
-                boss.update(player, delta);
-            }
+            boss.update(player, delta);
             
             // Boss attack phase system
             handleBossAttacks(delta);
@@ -719,48 +695,14 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                     }
                 }
             }
-            
-            // Boss collision with player2 (co-op mode)
-            if (coopMode && player2 != null && boss.collidesWith(player2)) {
-                long currentTime = System.currentTimeMillis();
-                if (currentTime - lastBossCollisionDamage >= BOSS_DAMAGE_COOLDOWN) {
-                    int damage = 10 + random.nextInt(11); // 10-20
-                    player2.consumeDamage(damage);
-                    damagePopups.add(new DamagePopup(player2.getX(), player2.getY(), damage, Color.RED));
-                    lastBossCollisionDamage = currentTime;
-                    System.out.println("Player 2 hit by Boss collision! Damage: " + damage + " Health: " + player2.getHealth());
-                    
-                    if (player2.getHealth() <= 0) {
-                        System.out.println("Player 2 destroyed!");
-                        player2 = null;
-                        coopMode = false;
-                        bullets2.clear();
-                    }
-                }
-            }
         }
         
         // Update boss bullets
         Iterator<BossBullet> bossBulletIterator = bossBullets.iterator();
         while (bossBulletIterator.hasNext()) {
             BossBullet bullet = bossBulletIterator.next();
-            // Find nearest player for homing bullets
-            if (coopMode && player2 != null) {
-                // Calculate distance to both players
-                double distToP1 = Math.sqrt(Math.pow(player.getX() - bullet.getX(), 2) + Math.pow(player.getY() - bullet.getY(), 2));
-                double distToP2 = Math.sqrt(Math.pow(player2.getX() - bullet.getX(), 2) + Math.pow(player2.getY() - bullet.getY(), 2));
-                
-                // Update towards closer player
-                if (distToP2 < distToP1) {
-                    bullet.update(player2);
-                } else {
-                    bullet.update(player);
-                }
-            } else {
-                bullet.update(player);
-            }
+            bullet.update(player);
             
-            // Check collision with player 1
             if (bullet.collidesWith(player)) {
                 player.consumeDamage(bullet.getDamage());
                 damagePopups.add(new DamagePopup(player.getX(), player.getY(), bullet.getDamage(), Color.RED)); // สีเดียวกับศัตรู
@@ -776,22 +718,7 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                         coopMode = false;
                     }
                 }
-            } 
-            // Check collision with player 2 (co-op mode)
-            else if (coopMode && player2 != null && bullet.collidesWith(player2)) {
-                player2.consumeDamage(bullet.getDamage());
-                damagePopups.add(new DamagePopup(player2.getX(), player2.getY(), bullet.getDamage(), Color.RED));
-                bossBulletIterator.remove();
-                System.out.println("Player 2 hit by boss bullet! Health: " + player2.getHealth());
-                
-                if (player2.getHealth() <= 0) {
-                    System.out.println("Player 2 destroyed!");
-                    player2 = null;
-                    coopMode = false;
-                    bullets2.clear();
-                }
-            } 
-            else if (bullet.isOffScreen(WORLD_WIDTH, WORLD_HEIGHT)) {
+            } else if (bullet.isOffScreen(WORLD_WIDTH, WORLD_HEIGHT)) {
                 bossBulletIterator.remove();
             }
         }
@@ -803,7 +730,7 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                 laser.updatePosition(boss.getX(), boss.getY());
                 laser.update(dt);
                 
-                // Boss laser damage to player 1 (17-30 per 0.5s)
+                // Boss laser damage (17-30 per 0.5s)
                 if (laser.collidesWith(player)) {
                     long currentTime = System.currentTimeMillis();
                     if (currentTime - lastBossLaserDamage >= BOSS_DAMAGE_COOLDOWN) {
@@ -824,25 +751,6 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                         }
                     }
                 }
-                
-                // Boss laser damage to player 2 (co-op mode)
-                if (coopMode && player2 != null && laser.collidesWith(player2)) {
-                    long currentTime = System.currentTimeMillis();
-                    if (currentTime - lastBossLaserDamage >= BOSS_DAMAGE_COOLDOWN) {
-                        int damage = 17 + random.nextInt(14); // 17-30
-                        player2.consumeDamage(damage);
-                        damagePopups.add(new DamagePopup(player2.getX(), player2.getY(), damage, Color.RED));
-                        lastBossLaserDamage = currentTime;
-                        System.out.println("Player 2 hit by boss laser! Damage: " + damage + " Health: " + player2.getHealth());
-                        
-                        if (player2.getHealth() <= 0) {
-                            System.out.println("Player 2 destroyed!");
-                            player2 = null;
-                            coopMode = false;
-                            bullets2.clear();
-                        }
-                    }
-                }
             }
         }
         
@@ -850,7 +758,6 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         for (Enemy enemy : enemies) {
             if (enemy.getType() == Enemy.EnemyType.TYPE1) {
                 LaserBeam laser = enemy.getActiveLaser();
-                // Check player 1
                 if (laser != null && laser.hitsPlayer(player)) {
                     int dmg = laser.getDamage();
                     player.consumeDamage(dmg);
@@ -865,21 +772,6 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                             player2 = null;
                             coopMode = false;
                         }
-                    }
-                }
-                
-                // Check player 2 (co-op mode)
-                if (coopMode && player2 != null && laser != null && laser.hitsPlayer(player2)) {
-                    int dmg = laser.getDamage();
-                    player2.consumeDamage(dmg);
-                    damagePopups.add(new DamagePopup(player2.getX(), player2.getY(), dmg, Color.ORANGE));
-                    System.out.println("Player 2 hit by laser! Health: " + player2.getHealth() + " (damage: " + dmg + ")");
-                    
-                    if (player2.getHealth() <= 0) {
-                        System.out.println("Player 2 destroyed!");
-                        player2 = null;
-                        coopMode = false;
-                        bullets2.clear();
                     }
                 }
             }
@@ -1253,22 +1145,14 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
             int p2Firerate = p1Firerate;
             
             // Spawn player2 ห่างจาก player1 50px ทางซ้าย
-            // Use custom Player 2 sprite based on spacecraft type
-            String p2Sprite = null;
-            switch (p1Type) {
-                case 0: // Large spacecraft
-                    p2Sprite = "Spacecraft-LargeP2.png";
-                    break;
-                case 1: // Medium spacecraft
-                    p2Sprite = "Spacecraft-MediumP2.png";
-                    break;
-                case 2: // Small spacecraft
-                    p2Sprite = "spacecraftP2.png";
-                    break;
+            // If small spacecraft (type 2) is selected, use custom Player 2 sprite
+            if (p1Type == 2) {
+                player2 = new Player((int)player.getX() - 50, (int)player.getY(), 
+                                    p1Type, p2HP, p2Speed, p2Firerate, "spacecraftP2.png");
+            } else {
+                player2 = new Player((int)player.getX() - 50, (int)player.getY(), 
+                                    p1Type, p2HP, p2Speed, p2Firerate);
             }
-            
-            player2 = new Player((int)player.getX() - 50, (int)player.getY(), 
-                                p1Type, p2HP, p2Speed, p2Firerate, p2Sprite);
             
             System.out.println("Co-op mode: ON (Player 2 created with same stats as Player 1)");
         } else {

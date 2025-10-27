@@ -48,7 +48,7 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
     // Boss
     private Boss boss;
     private boolean bossSpawned = false;
-    private static final long BOSS_SPAWN_TIME = 100000; // 3.5 minutes in milliseconds
+    private static final long BOSS_SPAWN_TIME = 10000; // 3.5 minutes in milliseconds
     
     // Boss attack system
     private ArrayList<BossBullet> bossBullets = new ArrayList<>();
