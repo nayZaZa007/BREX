@@ -93,8 +93,8 @@ public class Enemy {
             case TYPE2:
                 this.width = playerWidth * 2; // 2x player as requested
                 this.height = playerHeight * 2;
-                this.health = 3; // 3 hits to kill
-                this.maxHealth = 3;
+                this.health = 30; // 3 hits to kill
+                this.maxHealth = 30;
                 this.speed = 1.0;
                 this.color = Color.MAGENTA;
                 this.fireRate = 5000; // 5 seconds

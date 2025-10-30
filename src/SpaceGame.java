@@ -16,7 +16,7 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
     
     // Game States
     public enum GameState {
-        MENU, SPACECRAFT_SELECT, GAME, OPTIONS, EXIT_CONFIRM, PAUSED, LEVEL1_WIN
+        MENU, LEVEL_SELECT, SPACECRAFT_SELECT, GAME, OPTIONS, EXIT_CONFIRM, PAUSED, LEVEL1_WIN, LEVEL_UP
     }
     
     private static final int SCREEN_WIDTH = 1000;  // หน้าจอที่เห็น
@@ -48,7 +48,7 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
     // Boss
     private Boss boss;
     private boolean bossSpawned = false;
-    private static final long BOSS_SPAWN_TIME = 100000; // 3.5 minutes in milliseconds
+    private static final long BOSS_SPAWN_TIME = 25000; // 3.5 minutes in milliseconds
     
     // Boss attack system
     private ArrayList<BossBullet> bossBullets = new ArrayList<>();
@@ -76,6 +76,26 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
     private long winAnimLastFrameTime = 0;
     private static final long WIN_ANIM_FRAME_DURATION = 1000; // 0.5 fps = 2000ms per frame
     private boolean level1Unlocked = false; // Track if level 2 is unlocked
+    
+    // Level progression - save stats from level 1
+    private int savedMaxHealth = 0;
+    private int savedSpeed = 0;
+    private int savedFireRate = 0;
+    private int savedSpacecraftType = 0;
+    
+    // Level 2 (Endless mode)
+    private int currentLevel = 1; // 1 or 2
+    private boolean level2Unlocked = false;
+    private int level2HighScore = 0;
+    private Color level2BackgroundColor = new Color(20, 4, 0); // #140200ff
+    private static final String LEVEL2_PROGRESS_FILE = "level2_progress.dat";
+    
+    // Level Up System
+    private int selectedLevelUpOption = 0; // 0=HP, 1=Speed, 2=Fire Rate
+    private GameState stateBeforeLevelUp = GameState.GAME;
+    private int pendingHealthUpgrade = 0;
+    private int pendingSpeedUpgrade = 0;
+    private int pendingFireRateUpgrade = 0;
     
     // TYPE1 enemy spawn cap
     private int type1MaxCap = 1; // Random 1-6
@@ -137,7 +157,7 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
     private static final String EASTER_EGG_FILE = "easter_egg.dat";
     private int easterEggMode = 0; // 0 = normal, 1 = special mode
     private String keySequence = ""; // Track key sequence in menu
-    private static final String SECRET_CODE_SPECIAL = "drifx";
+    private static final String SECRET_CODE_SPECIAL = "dlitf";
     private static final String SECRET_CODE_NORMAL = "brex";
     
     // Settings System
@@ -162,8 +182,14 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         this.setFocusable(true);
         this.addKeyListener(this);
         
+        // Load settings (including fullscreen)
+        loadSettings();
+        
         // Load Easter egg mode from file
         loadEasterEggMode();
+        
+        // Load level 2 progress
+        loadLevel2Progress();
         
         // Initialize audio system
         initializeAudio();
@@ -421,8 +447,8 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
             }
         }
         
-        // Check for Boss spawn at 3.5 minutes
-        if (!bossSpawned && elapsedTime >= BOSS_SPAWN_TIME) {
+        // Check for Boss spawn at 3.5 minutes (only in Level 1)
+        if (currentLevel == 1 && !bossSpawned && elapsedTime >= BOSS_SPAWN_TIME) {
             spawnBoss();
             bossSpawned = true;
             // Play boss music (only in normal mode)
@@ -431,8 +457,11 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
             }
         }
         
-        // Spawn enemies (stop spawning when boss appears)
-        if (!bossSpawned && System.currentTimeMillis() - lastEnemySpawn > enemySpawnRate) {
+        // Spawn enemies
+        // In Level 1: stop spawning when boss appears
+        // In Level 2: spawn continuously (endless mode)
+        boolean shouldSpawnEnemies = (currentLevel == 1 && !bossSpawned) || (currentLevel == 2);
+        if (shouldSpawnEnemies && System.currentTimeMillis() - lastEnemySpawn > enemySpawnRate) {
             spawnEnemy();
             lastEnemySpawn = System.currentTimeMillis();
             System.out.println("Enemy spawned! Total enemies: " + enemies.size());
@@ -465,6 +494,12 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                 if (player.getHealth() <= 0) {
                     System.out.println("Game Over! Final Score: " + score);
                     gameRunning = false;
+                    
+                    // Handle Level 2 completion/high score
+                    if (currentLevel == 2) {
+                        handleLevel2GameOver();
+                    }
+                    
                     // ลบ Player2 ออกเมื่อ Game Over
                     if (coopMode && player2 != null) {
                         player2 = null;
@@ -528,7 +563,10 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                         System.out.println("Enemy destroyed! Score: " + score);
 
                         // Chance to spawn power-up
-                        if (random.nextInt(10) == 0) {
+                        // Level 1: 10% chance (1/10)
+                        // Level 2: 5% chance (1/20) - harder to get powerups
+                        int dropChance = (currentLevel == 2) ? 20 : 10;
+                        if (random.nextInt(dropChance) == 0) {
                             powerUps.add(new PowerUp(enemy.getX(), enemy.getY()));
                         }
                     } else {
@@ -594,7 +632,9 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                             enemyIterator3.remove();
                             score += 10;
                             
-                            if (random.nextInt(10) == 0) {
+                            // Level 2: harder powerup drops (5% vs 10%)
+                            int dropChance = (currentLevel == 2) ? 20 : 10;
+                            if (random.nextInt(dropChance) == 0) {
                                 powerUps.add(new PowerUp(enemy.getX(), enemy.getY()));
                             }
                         }
@@ -652,6 +692,12 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                 if (player.getHealth() <= 0) {
                     System.out.println("Game Over! Final Score: " + score);
                     gameRunning = false;
+                    
+                    // Handle Level 2 completion/high score
+                    if (currentLevel == 2) {
+                        handleLevel2GameOver();
+                    }
+                    
                     // ลบ Player2 ออกเมื่อ Game Over
                     if (coopMode && player2 != null) {
                         player2 = null;
@@ -673,6 +719,12 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                     // เลือดหมด = Game Over
                     System.out.println("Game Over! Final Score: " + score);
                     gameRunning = false;
+                    
+                    // Handle Level 2 completion/high score
+                    if (currentLevel == 2) {
+                        handleLevel2GameOver();
+                    }
+                    
                     // ลบ Player2 ออก
                     player2 = null;
                     coopMode = false;
@@ -711,6 +763,12 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                     if (player.getHealth() <= 0) {
                         System.out.println("Game Over! Final Score: " + score);
                         gameRunning = false;
+                        
+                        // Handle Level 2 completion/high score
+                        if (currentLevel == 2) {
+                            handleLevel2GameOver();
+                        }
+                        
                         // ลบ Player2 ออกเมื่อ Game Over
                         if (coopMode && player2 != null) {
                             player2 = null;
@@ -770,6 +828,12 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                 if (player.getHealth() <= 0) {
                     System.out.println("Game Over! Final Score: " + score);
                     gameRunning = false;
+                    
+                    // Handle Level 2 completion/high score
+                    if (currentLevel == 2) {
+                        handleLevel2GameOver();
+                    }
+                    
                     // ลบ Player2 ออกเมื่อ Game Over
                     if (coopMode && player2 != null) {
                         player2 = null;
@@ -816,6 +880,12 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                         if (player.getHealth() <= 0) {
                             System.out.println("Game Over! Final Score: " + score);
                             gameRunning = false;
+                            
+                            // Handle Level 2 completion/high score
+                            if (currentLevel == 2) {
+                                handleLevel2GameOver();
+                            }
+                            
                             // ลบ Player2 ออกเมื่อ Game Over
                             if (coopMode && player2 != null) {
                                 player2 = null;
@@ -860,6 +930,12 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                     if (player.getHealth() <= 0) {
                         System.out.println("Game Over! Final Score: " + score);
                         gameRunning = false;
+                        
+                        // Handle Level 2 completion/high score
+                        if (currentLevel == 2) {
+                            handleLevel2GameOver();
+                        }
+                        
                         // ลบ Player2 ออกเมื่อ Game Over
                         if (coopMode && player2 != null) {
                             player2 = null;
@@ -922,12 +998,33 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                 bossDeathAnimationActive = false;
                 boss = null; // Finally remove boss
                 
+                // Save player stats for level 2 (use the better stats from either player in co-op)
+                if (coopMode && player2 != null) {
+                    // In co-op mode, both players should have same stats, but just in case
+                    savedMaxHealth = Math.max(player.getMaxHealth(), player2.getMaxHealth());
+                    savedSpeed = Math.max(player.getSpeed(), player2.getSpeed());
+                    savedFireRate = Math.max(player.getFireRateRPM(), player2.getFireRateRPM());
+                } else {
+                    savedMaxHealth = player.getMaxHealth();
+                    savedSpeed = player.getSpeed();
+                    savedFireRate = player.getFireRateRPM();
+                }
+                savedSpacecraftType = player.getSpacecraftType();
+                
+                System.out.println("Stats saved for Level 2:");
+                System.out.println("  HP: " + savedMaxHealth);
+                System.out.println("  Speed: " + savedSpeed);
+                System.out.println("  Fire Rate: " + savedFireRate + " RPM");
+                System.out.println("  Spacecraft: " + savedSpacecraftType);
+                
                 // Transition to Level 1 Win Screen
                 currentState = GameState.LEVEL1_WIN;
-                level1Unlocked = true; // Unlock level 2
+                level1Unlocked = true; // Unlock saved stats for next game
+                level2Unlocked = true; // Unlock Level 2 access
+                saveLevel2Progress(); // Save Level 2 unlock status
                 winAnimCurrentFrame = 0;
                 winAnimLastFrameTime = System.currentTimeMillis();
-                System.out.println("Level 1 Complete! Transitioning to win screen...");
+                System.out.println("Level 1 Complete! Level 2 unlocked! Transitioning to win screen...");
             }
         }
 
@@ -986,6 +1083,9 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         if (newLevel > level) {
             level = newLevel;
             System.out.println("Level up! Now at level: " + level);
+            
+            // Trigger Level Up screen
+            triggerLevelUpScreen();
         }
         enemySpawnRate = Math.max(200, 1000 - (level * 100)); // Faster spawning over time
     }
@@ -1484,16 +1584,38 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
     }
     
     private void applyPowerUp(PowerUp powerUp, Player targetPlayer) {
-        switch (powerUp.getType()) {
-            case HEALTH:
-                targetPlayer.heal(20);
-                break;
-            case SPEED:
-                targetPlayer.increaseSpeed(1);
-                break;
-            case FIRE_RATE:
-                targetPlayer.increaseFireRate(50);
-                break;
+        // In co-op mode, apply power-up to both players
+        if (coopMode && player2 != null) {
+            switch (powerUp.getType()) {
+                case HEALTH:
+                    player.heal(20);
+                    player2.heal(20);
+                    System.out.println("Co-op: Both players healed +20 HP");
+                    break;
+                case SPEED:
+                    player.increaseSpeed(1);
+                    player2.increaseSpeed(1);
+                    System.out.println("Co-op: Both players speed +1");
+                    break;
+                case FIRE_RATE:
+                    player.increaseFireRate(50);
+                    player2.increaseFireRate(50);
+                    System.out.println("Co-op: Both players fire rate +50");
+                    break;
+            }
+        } else {
+            // Single player mode - apply only to target
+            switch (powerUp.getType()) {
+                case HEALTH:
+                    targetPlayer.heal(20);
+                    break;
+                case SPEED:
+                    targetPlayer.increaseSpeed(1);
+                    break;
+                case FIRE_RATE:
+                    targetPlayer.increaseFireRate(50);
+                    break;
+            }
         }
     }
     
@@ -1526,6 +1648,9 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
             case MENU:
                 drawMainMenu(g2d);
                 break;
+            case LEVEL_SELECT:
+                drawLevelSelect(g2d);
+                break;
             case SPACECRAFT_SELECT:
                 drawSpacecraftSelect(g2d);
                 break;
@@ -1537,6 +1662,17 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                 break;
             case GAME:
                 if (gameRunning) {
+                    // Set background color based on current level (before camera transform)
+                    if (currentLevel == 2) {
+                        // Level 2: Dark red background (#2b0400)
+                        g2d.setColor(level2BackgroundColor);
+                        g2d.fillRect(-150, 0, SCREEN_WIDTH + 300, SCREEN_HEIGHT);
+                    } else {
+                        // Level 1: Black background (default)
+                        g2d.setColor(Color.BLACK);
+                        g2d.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+                    }
+                    
                     // Apply camera transformation
                     g2d.translate(-cameraX, -cameraY);
                     
@@ -1742,6 +1878,53 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                 // Draw Level 1 Win Screen
                 drawLevel1WinScreen(g2d);
                 break;
+            
+            case LEVEL_UP:
+                // Draw game in background (frozen)
+                if (gameRunning || !gameRunning) { // Draw regardless
+                    AffineTransform old = g2d.getTransform();
+                    g2d.translate(-cameraX, -cameraY);
+                    
+                    // Draw stars background
+                    drawStars(g2d);
+                    
+                    // Draw game objects in world space
+                    player.draw(g2d);
+                    
+                    if (coopMode && player2 != null) {
+                        player2.draw(g2d);
+                    }
+                    
+                    for (Enemy enemy : enemies) {
+                        enemy.draw(g2d);
+                    }
+                    
+                    for (Bullet bullet : bullets) {
+                        bullet.draw(g2d);
+                    }
+                    
+                    for (EnemyBullet enemyBullet : enemyBullets) {
+                        enemyBullet.draw(g2d);
+                    }
+                    
+                    for (PowerUp powerUp : powerUps) {
+                        powerUp.draw(g2d);
+                    }
+                    
+                    if (boss != null && !boss.isDead()) {
+                        boss.draw(g2d);
+                    }
+                    
+                    g2d.setTransform(old);
+                }
+                
+                // Draw dark overlay
+                g2d.setColor(new Color(0, 0, 0, 180));
+                g2d.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+                
+                // Draw Level Up Screen
+                drawLevelUpScreen(g2d);
+                break;
         }
     }
     
@@ -1775,22 +1958,29 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
             // Player 2 UI - ขวาบน (copy มาจาก Player 1)
             drawPlayerUI(g2d, player2, SCREEN_WIDTH - 220, false, "Player 2 (Arrows)", "R-Shift");
             
-            // Timer countdown (กลาง) - 3.5 minutes = 210 seconds
-            long elapsedMs = System.currentTimeMillis() - gameStartTime;
-            long remainingMs = Math.max(0, BOSS_SPAWN_TIME - elapsedMs);
-            int remainingSeconds = (int)(remainingMs / 1000);
-            int minutes = remainingSeconds / 60;
-            int seconds = remainingSeconds % 60;
-            
-            if (!bossSpawned) {
-                g2d.setColor(Color.CYAN);
+            // Timer countdown (กลาง) - Only for Level 1
+            if (currentLevel == 1) {
+                long elapsedMs = System.currentTimeMillis() - gameStartTime;
+                long remainingMs = Math.max(0, BOSS_SPAWN_TIME - elapsedMs);
+                int remainingSeconds = (int)(remainingMs / 1000);
+                int minutes = remainingSeconds / 60;
+                int seconds = remainingSeconds % 60;
+                
+                if (!bossSpawned) {
+                    g2d.setColor(Color.CYAN);
+                    g2d.setFont(new Font("Arial", Font.BOLD, 18));
+                    String timerText = String.format("Boss in: %d:%02d", minutes, seconds);
+                    g2d.drawString(timerText, SCREEN_WIDTH / 2 - 70, 25);
+                } else {
+                    g2d.setColor(Color.RED);
+                    g2d.setFont(new Font("Arial", Font.BOLD, 18));
+                    g2d.drawString("BOSS FIGHT!", SCREEN_WIDTH / 2 - 60, 25);
+                }
+            } else if (currentLevel == 2) {
+                // Level 2: Show "Endless Mode" instead of timer
+                g2d.setColor(Color.ORANGE);
                 g2d.setFont(new Font("Arial", Font.BOLD, 18));
-                String timerText = String.format("Boss in: %d:%02d", minutes, seconds);
-                g2d.drawString(timerText, SCREEN_WIDTH / 2 - 70, 25);
-            } else {
-                g2d.setColor(Color.RED);
-                g2d.setFont(new Font("Arial", Font.BOLD, 18));
-                g2d.drawString("BOSS FIGHT!", SCREEN_WIDTH / 2 - 60, 25);
+                g2d.drawString("ENDLESS MODE", SCREEN_WIDTH / 2 - 80, 25);
             }
         } else {
             // Solo mode: แสดง UI แบบเดิม
@@ -1799,22 +1989,29 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
             g2d.drawString("Level: " + level, 10, 45);
             g2d.drawString("Health: " + player.getHealth(), 10, 65);
             
-            // Timer countdown (3.5 minutes = 210 seconds)
-            long elapsedMs = System.currentTimeMillis() - gameStartTime;
-            long remainingMs = Math.max(0, BOSS_SPAWN_TIME - elapsedMs);
-            int remainingSeconds = (int)(remainingMs / 1000);
-            int minutes = remainingSeconds / 60;
-            int seconds = remainingSeconds % 60;
-            
-            if (!bossSpawned) {
-                g2d.setColor(Color.CYAN);
+            // Timer countdown - Only for Level 1
+            if (currentLevel == 1) {
+                long elapsedMs = System.currentTimeMillis() - gameStartTime;
+                long remainingMs = Math.max(0, BOSS_SPAWN_TIME - elapsedMs);
+                int remainingSeconds = (int)(remainingMs / 1000);
+                int minutes = remainingSeconds / 60;
+                int seconds = remainingSeconds % 60;
+                
+                if (!bossSpawned) {
+                    g2d.setColor(Color.CYAN);
+                    g2d.setFont(new Font("Arial", Font.BOLD, 18));
+                    String timerText = String.format("Boss in: %d:%02d", minutes, seconds);
+                    g2d.drawString(timerText, SCREEN_WIDTH / 2 - 70, 25);
+                } else {
+                    g2d.setColor(Color.RED);
+                    g2d.setFont(new Font("Arial", Font.BOLD, 18));
+                    g2d.drawString("BOSS FIGHT!", SCREEN_WIDTH / 2 - 60, 25);
+                }
+            } else if (currentLevel == 2) {
+                // Level 2: Show "Endless Mode" instead of timer
+                g2d.setColor(Color.ORANGE);
                 g2d.setFont(new Font("Arial", Font.BOLD, 18));
-                String timerText = String.format("Boss in: %d:%02d", minutes, seconds);
-                g2d.drawString(timerText, SCREEN_WIDTH / 2 - 70, 25);
-            } else {
-                g2d.setColor(Color.RED);
-                g2d.setFont(new Font("Arial", Font.BOLD, 18));
-                g2d.drawString("BOSS FIGHT!", SCREEN_WIDTH / 2 - 60, 25);
+                g2d.drawString("ENDLESS MODE", SCREEN_WIDTH / 2 - 80, 25);
             }
             g2d.setFont(new Font("Arial", Font.BOLD, 16));
             g2d.setColor(Color.WHITE);
@@ -1965,10 +2162,114 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
             }
         }
         
+        // Draw saved stats indicator if level 1 completed
+        if (level1Unlocked && savedMaxHealth > 0) {
+            g2d.setColor(Color.GREEN);
+            g2d.setFont(new Font("Arial", Font.BOLD, 16));
+            FontMetrics statsFm = g2d.getFontMetrics();
+            String statsTitle = "Level 1 Completed - Saved Stats:";
+            int statsX = (SCREEN_WIDTH - statsFm.stringWidth(statsTitle)) / 2;
+            g2d.drawString(statsTitle, statsX, 440);
+            
+            g2d.setFont(new Font("Arial", Font.PLAIN, 14));
+            FontMetrics detailFm = g2d.getFontMetrics();
+            String statsDetail = "HP: " + savedMaxHealth + " | Speed: " + savedSpeed + " | Fire Rate: " + savedFireRate + " RPM";
+            int detailX = (SCREEN_WIDTH - detailFm.stringWidth(statsDetail)) / 2;
+            g2d.drawString(statsDetail, detailX, 465);
+            
+            String nextLevel = "Next game will start with these stats!";
+            int nextX = (SCREEN_WIDTH - detailFm.stringWidth(nextLevel)) / 2;
+            g2d.setColor(Color.YELLOW);
+            g2d.drawString(nextLevel, nextX, 490);
+        }
+        
         // Draw controls
         g2d.setColor(Color.GRAY);
         g2d.setFont(new Font("Arial", Font.PLAIN, 14));
     g2d.drawString("Use ↑↓ to navigate, ENTER to select/change, ESC to go back", 10, SCREEN_HEIGHT - 20);
+    }
+    
+    private void drawLevelSelect(Graphics2D g2d) {
+        // Draw background
+        drawStars(g2d);
+        
+        // Draw title
+        g2d.setColor(Color.CYAN);
+        g2d.setFont(new Font("Arial", Font.BOLD, 48));
+        FontMetrics titleFm = g2d.getFontMetrics();
+        String title = "SELECT LEVEL";
+        int titleX = (SCREEN_WIDTH - titleFm.stringWidth(title)) / 2;
+        g2d.drawString(title, titleX, 150);
+        
+        // Draw level options
+        g2d.setFont(new Font("Arial", Font.BOLD, 32));
+        FontMetrics levelFm = g2d.getFontMetrics();
+        
+        // Level 1
+        String level1Text = "Level 1 - Story Mode";
+        int level1X = (SCREEN_WIDTH - levelFm.stringWidth(level1Text)) / 2;
+        if (selectedMenuOption == 0) {
+            g2d.setColor(Color.YELLOW);
+            g2d.drawString("> " + level1Text + " <", (SCREEN_WIDTH - levelFm.stringWidth("> " + level1Text + " <")) / 2, 280);
+        } else {
+            g2d.setColor(Color.WHITE);
+            g2d.drawString(level1Text, level1X, 280);
+        }
+        
+        // Level 1 description
+        g2d.setFont(new Font("Arial", Font.PLAIN, 16));
+        FontMetrics descFm = g2d.getFontMetrics();
+        g2d.setColor(Color.GRAY);
+        String level1Desc = "Fight enemies and defeat the boss";
+        int level1DescX = (SCREEN_WIDTH - descFm.stringWidth(level1Desc)) / 2;
+        g2d.drawString(level1Desc, level1DescX, 310);
+        
+        // Level 2
+        g2d.setFont(new Font("Arial", Font.BOLD, 32));
+        String level2Text = "Level 2 - Endless Mode";
+        int level2X = (SCREEN_WIDTH - levelFm.stringWidth(level2Text)) / 2;
+        
+        if (!level2Unlocked) {
+            // Locked state
+            g2d.setColor(Color.DARK_GRAY);
+            g2d.drawString("🔒 " + level2Text, (SCREEN_WIDTH - levelFm.stringWidth("🔒 " + level2Text)) / 2, 380);
+            
+            g2d.setFont(new Font("Arial", Font.PLAIN, 16));
+            g2d.setColor(Color.RED);
+            String lockedMsg = "Complete Level 1 to unlock";
+            int lockedX = (SCREEN_WIDTH - descFm.stringWidth(lockedMsg)) / 2;
+            g2d.drawString(lockedMsg, lockedX, 410);
+        } else {
+            // Unlocked state
+            if (selectedMenuOption == 1) {
+                g2d.setColor(Color.YELLOW);
+                g2d.drawString("> " + level2Text + " <", (SCREEN_WIDTH - levelFm.stringWidth("> " + level2Text + " <")) / 2, 380);
+            } else {
+                g2d.setColor(Color.WHITE);
+                g2d.drawString(level2Text, level2X, 380);
+            }
+            
+            // Level 2 description
+            g2d.setFont(new Font("Arial", Font.PLAIN, 16));
+            g2d.setColor(Color.GRAY);
+            String level2Desc = "Survive endless waves - No boss - High score mode";
+            int level2DescX = (SCREEN_WIDTH - descFm.stringWidth(level2Desc)) / 2;
+            g2d.drawString(level2Desc, level2DescX, 410);
+            
+            // High score
+            if (level2HighScore > 0) {
+                g2d.setColor(new Color(255, 215, 0)); // Gold color
+                g2d.setFont(new Font("Arial", Font.BOLD, 18));
+                String highScoreText = "High Score: " + level2HighScore;
+                int highScoreX = (SCREEN_WIDTH - g2d.getFontMetrics().stringWidth(highScoreText)) / 2;
+                g2d.drawString(highScoreText, highScoreX, 440);
+            }
+        }
+        
+        // Draw controls
+        g2d.setColor(Color.GRAY);
+        g2d.setFont(new Font("Arial", Font.PLAIN, 14));
+        g2d.drawString("Use ↑↓ to navigate, ENTER to select, ESC to go back", 10, SCREEN_HEIGHT - 20);
     }
     
     private void drawOptionsMenu(Graphics2D g2d) {
@@ -2147,6 +2448,87 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         g2d.drawString(restartText, x, SCREEN_HEIGHT / 2 + 50);
     }
     
+    private void drawLevelUpScreen(Graphics2D g2d) {
+        // Title
+        g2d.setColor(Color.YELLOW);
+        g2d.setFont(new Font("Arial", Font.BOLD, 56));
+        FontMetrics titleFm = g2d.getFontMetrics();
+        String title = "LEVEL UP!";
+        int titleX = (SCREEN_WIDTH - titleFm.stringWidth(title)) / 2;
+        g2d.drawString(title, titleX, 120);
+        
+        // Subtitle
+        g2d.setColor(Color.WHITE);
+        g2d.setFont(new Font("Arial", Font.PLAIN, 20));
+        FontMetrics subtitleFm = g2d.getFontMetrics();
+        String subtitle = "Choose one upgrade:";
+        int subtitleX = (SCREEN_WIDTH - subtitleFm.stringWidth(subtitle)) / 2;
+        g2d.drawString(subtitle, subtitleX, 170);
+        
+        // Get current player stats
+        int currentMaxHP = player.getMaxHealth();
+        int currentSpeed = player.getSpeed();
+        int currentFireRate = player.getFireRateRPM();
+        
+        // Calculate upgrades
+        pendingHealthUpgrade = (int) (currentMaxHP * 0.2); // +20% HP
+        pendingSpeedUpgrade = (int) (currentSpeed * 0.15); // +15% Speed
+        pendingFireRateUpgrade = (int) (currentFireRate * 0.1); // +10% Fire Rate
+        
+        // Draw upgrade options
+        String[] options = {
+            "Max Health",
+            "Move Speed", 
+            "Fire Rate"
+        };
+        
+        int[] beforeValues = {currentMaxHP, currentSpeed, currentFireRate};
+        int[] afterValues = {
+            currentMaxHP + pendingHealthUpgrade,
+            currentSpeed + pendingSpeedUpgrade,
+            currentFireRate + pendingFireRateUpgrade
+        };
+        
+        String[] units = {"HP", "pixels/s", "RPM"};
+        
+        int startY = 250;
+        int spacing = 100;
+        
+        for (int i = 0; i < 3; i++) {
+            int y = startY + i * spacing;
+            
+            // Highlight selected option
+            if (i == selectedLevelUpOption) {
+                g2d.setColor(new Color(255, 255, 0, 100));
+                g2d.fillRoundRect(SCREEN_WIDTH / 2 - 250, y - 40, 500, 80, 20, 20);
+                g2d.setColor(Color.YELLOW);
+                g2d.setStroke(new BasicStroke(3));
+                g2d.drawRoundRect(SCREEN_WIDTH / 2 - 250, y - 40, 500, 80, 20, 20);
+            }
+            
+            // Option name
+            g2d.setColor(i == selectedLevelUpOption ? Color.YELLOW : Color.WHITE);
+            g2d.setFont(new Font("Arial", Font.BOLD, 28));
+            FontMetrics optionFm = g2d.getFontMetrics();
+            g2d.drawString(options[i], SCREEN_WIDTH / 2 - 230, y);
+            
+            // Before => After values
+            g2d.setFont(new Font("Arial", Font.PLAIN, 22));
+            FontMetrics valueFm = g2d.getFontMetrics();
+            String valueText = beforeValues[i] + " " + units[i] + "  =>  " + afterValues[i] + " " + units[i];
+            g2d.setColor(i == selectedLevelUpOption ? Color.CYAN : Color.LIGHT_GRAY);
+            g2d.drawString(valueText, SCREEN_WIDTH / 2 - 230, y + 25);
+        }
+        
+        // Controls hint
+        g2d.setColor(Color.GRAY);
+        g2d.setFont(new Font("Arial", Font.PLAIN, 16));
+        FontMetrics controlsFm = g2d.getFontMetrics();
+        String controls = "Use ↑↓ to select, ENTER to confirm";
+        int controlsX = (SCREEN_WIDTH - controlsFm.stringWidth(controls)) / 2;
+        g2d.drawString(controls, controlsX, SCREEN_HEIGHT - 50);
+    }
+    
     private void drawSpacecraftSelect(Graphics2D g2d) {
         // Draw background
         drawStars(g2d);
@@ -2224,6 +2606,9 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
             case MENU:
                 handleMenuInput(key);
                 break;
+            case LEVEL_SELECT:
+                handleLevelSelectInput(key);
+                break;
             case SPACECRAFT_SELECT:
                 handleSpacecraftSelectInput(key);
                 break;
@@ -2241,6 +2626,9 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                 break;
             case LEVEL1_WIN:
                 handleLevel1WinInput(key);
+                break;
+            case LEVEL_UP:
+                handleLevelUpInput(key);
                 break;
         }
     }
@@ -2266,6 +2654,15 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
                 playBGM(); // Restart BGM with normal mode
                 System.out.println("Normal mode activated! (brex entered)");
                 keySequence = ""; // Reset
+            } else if (keySequence.endsWith("reset")) {
+                // Reset saved stats
+                savedMaxHealth = 0;
+                savedSpeed = 0;
+                savedFireRate = 0;
+                savedSpacecraftType = 0;
+                level1Unlocked = false;
+                System.out.println("Saved stats reset! Next game will start fresh.");
+                keySequence = ""; // Reset
             }
         }
         
@@ -2275,9 +2672,9 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
             selectedMenuOption = (selectedMenuOption + 1) % mainMenuOptions.length;
         } else if (key == KeyEvent.VK_ENTER) {
             switch (selectedMenuOption) {
-                case 0: // Play - go to spacecraft selection
-                    currentState = GameState.SPACECRAFT_SELECT;
-                    selectedSpacecraft = 0;
+                case 0: // Play - go to level select
+                    currentState = GameState.LEVEL_SELECT;
+                    selectedMenuOption = 0; // Reset to Level 1
                     break;
                 case 1: // Options
                     lastStateBeforeExitConfirm = GameState.MENU; // Track that we came from menu
@@ -2297,6 +2694,31 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         }
     }
     
+    private void handleLevelSelectInput(int key) {
+        if (key == KeyEvent.VK_UP || key == KeyEvent.VK_DOWN) {
+            // Toggle between Level 1 and Level 2 (if unlocked)
+            if (level2Unlocked) {
+                selectedMenuOption = (selectedMenuOption == 0) ? 1 : 0;
+            }
+        } else if (key == KeyEvent.VK_ENTER) {
+            if (selectedMenuOption == 0) {
+                // Level 1 - go to spacecraft selection
+                currentLevel = 1;
+                currentState = GameState.SPACECRAFT_SELECT;
+                selectedSpacecraft = 0;
+            } else if (selectedMenuOption == 1 && level2Unlocked) {
+                // Level 2 - go to spacecraft selection
+                currentLevel = 2;
+                currentState = GameState.SPACECRAFT_SELECT;
+                selectedSpacecraft = 0;
+            }
+        } else if (key == KeyEvent.VK_ESCAPE) {
+            // Go back to main menu
+            currentState = GameState.MENU;
+            selectedMenuOption = 0;
+        }
+    }
+    
     private void handleSpacecraftSelectInput(int key) {
         if (key == KeyEvent.VK_LEFT) {
             selectedSpacecraft = (selectedSpacecraft - 1 + 3) % 3;
@@ -2307,8 +2729,8 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
             stopBGM(); // Stop menu BGM when starting game
             startNewGame();
         } else if (key == KeyEvent.VK_ESCAPE) {
-            // Back to main menu
-            currentState = GameState.MENU;
+            // Back to level select
+            currentState = GameState.LEVEL_SELECT;
             selectedMenuOption = 0;
         }
     }
@@ -2567,6 +2989,61 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
             System.out.println("Returned to main menu. Level 2 is now available.");
         }
     }
+    
+    private void handleLevelUpInput(int key) {
+        if (key == KeyEvent.VK_UP) {
+            selectedLevelUpOption = (selectedLevelUpOption - 1 + 3) % 3;
+        } else if (key == KeyEvent.VK_DOWN) {
+            selectedLevelUpOption = (selectedLevelUpOption + 1) % 3;
+        } else if (key == KeyEvent.VK_ENTER) {
+            // Apply selected upgrade
+            applyLevelUpgrade();
+            
+            // Resume game
+            currentState = stateBeforeLevelUp;
+            System.out.println("Upgrade applied! Resuming game...");
+        }
+    }
+    
+    private void triggerLevelUpScreen() {
+        // Save current state and pause game
+        stateBeforeLevelUp = currentState;
+        currentState = GameState.LEVEL_UP;
+        selectedLevelUpOption = 0;
+        System.out.println("Level Up screen triggered!");
+    }
+    
+    private void applyLevelUpgrade() {
+        // Apply upgrade based on selection
+        switch (selectedLevelUpOption) {
+            case 0: // Max Health
+                player.increaseMaxHealth(pendingHealthUpgrade);
+                if (coopMode && player2 != null) {
+                    player2.increaseMaxHealth(pendingHealthUpgrade);
+                }
+                System.out.println("Max Health increased by " + pendingHealthUpgrade);
+                break;
+            case 1: // Move Speed
+                player.increaseSpeed(pendingSpeedUpgrade);
+                if (coopMode && player2 != null) {
+                    player2.increaseSpeed(pendingSpeedUpgrade);
+                }
+                System.out.println("Move Speed increased by " + pendingSpeedUpgrade);
+                break;
+            case 2: // Fire Rate
+                player.increaseFireRate(pendingFireRateUpgrade);
+                if (coopMode && player2 != null) {
+                    player2.increaseFireRate(pendingFireRateUpgrade);
+                }
+                System.out.println("Fire Rate increased by " + pendingFireRateUpgrade + " RPM");
+                break;
+        }
+        
+        // Reset pending upgrades
+        pendingHealthUpgrade = 0;
+        pendingSpeedUpgrade = 0;
+        pendingFireRateUpgrade = 0;
+    }
 
     
     private void startNewGame() {
@@ -2581,9 +3058,24 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         lastUpdateTimeMillis = System.currentTimeMillis();
         
         // Create player with selected spacecraft stats
-        int hp = spacecraftStats[0][selectedSpacecraft];
-        int speed = spacecraftStats[1][selectedSpacecraft];
-        int firerate = spacecraftStats[2][selectedSpacecraft];
+        // If level 2 unlocked and we have saved stats, use them
+        int hp, speed, firerate;
+        if (level1Unlocked && savedMaxHealth > 0) {
+            // Use saved stats from level 1
+            hp = savedMaxHealth;
+            speed = savedSpeed;
+            firerate = savedFireRate;
+            System.out.println("Starting with saved Level 1 stats:");
+            System.out.println("  HP: " + hp);
+            System.out.println("  Speed: " + speed);
+            System.out.println("  Fire Rate: " + firerate + " RPM");
+        } else {
+            // Use base stats from spacecraft selection
+            hp = spacecraftStats[0][selectedSpacecraft];
+            speed = spacecraftStats[1][selectedSpacecraft];
+            firerate = spacecraftStats[2][selectedSpacecraft];
+        }
+        
         player = new Player(WORLD_WIDTH / 2, WORLD_HEIGHT / 2, selectedSpacecraft, hp, speed, firerate);
         
         // Reset co-op mode and player2
@@ -2690,6 +3182,19 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
         frame.revalidate();
     }
     
+    public boolean isFullscreenEnabled() {
+        return fullscreen;
+    }
+    
+    public void applyInitialFullscreen() {
+        if (fullscreen) {
+            // Apply fullscreen after a short delay to ensure frame is ready
+            SwingUtilities.invokeLater(() -> {
+                toggleFullscreen(true);
+            });
+        }
+    }
+    
     // Easter Egg System Methods
     private void loadEasterEggMode() {
         try {
@@ -2762,6 +3267,63 @@ public class SpaceGame extends JPanel implements ActionListener, KeyListener {
             System.out.println("Settings saved: BGM=" + bgmVolume + ", SFX=" + sfxVolume + ", Fullscreen=" + fullscreen);
         } catch (IOException e) {
             System.out.println("Could not save settings: " + e.getMessage());
+        }
+    }
+    
+    private void loadLevel2Progress() {
+        try {
+            BufferedReader reader = new BufferedReader(new FileReader(LEVEL2_PROGRESS_FILE));
+            String line1 = reader.readLine(); // level2Unlocked
+            String line2 = reader.readLine(); // level2HighScore
+            reader.close();
+            
+            if (line1 != null && line2 != null) {
+                level2Unlocked = Boolean.parseBoolean(line1);
+                level2HighScore = Integer.parseInt(line2);
+                System.out.println("Level 2 progress loaded: Unlocked=" + level2Unlocked + ", High Score=" + level2HighScore);
+            }
+        } catch (IOException | NumberFormatException e) {
+            // Default values if file doesn't exist
+            level2Unlocked = false;
+            level2HighScore = 0;
+            System.out.println("No level 2 progress found, starting fresh.");
+        }
+    }
+    
+    private void saveLevel2Progress() {
+        try {
+            BufferedWriter writer = new BufferedWriter(new FileWriter(LEVEL2_PROGRESS_FILE));
+            writer.write(String.valueOf(level2Unlocked) + "\n");
+            writer.write(String.valueOf(level2HighScore) + "\n");
+            writer.close();
+            System.out.println("Level 2 progress saved: Unlocked=" + level2Unlocked + ", High Score=" + level2HighScore);
+        } catch (IOException e) {
+            System.out.println("Could not save level 2 progress: " + e.getMessage());
+        }
+    }
+    
+    private void handleLevel2GameOver() {
+        // Unlock Level 2 if not already unlocked
+        boolean wasLocked = !level2Unlocked;
+        level2Unlocked = true;
+        
+        // Update high score if current score is higher
+        boolean isNewRecord = false;
+        if (score > level2HighScore) {
+            level2HighScore = score;
+            isNewRecord = true;
+            System.out.println("NEW RECORD! High Score: " + level2HighScore);
+        }
+        
+        // Save progress
+        saveLevel2Progress();
+        
+        // Print status
+        if (wasLocked) {
+            System.out.println("Level 2 unlocked!");
+        }
+        if (isNewRecord) {
+            System.out.println("New high score in Level 2: " + level2HighScore);
         }
     }
     

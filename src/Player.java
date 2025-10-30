@@ -237,6 +237,11 @@ public class Player {
         if (health > maxHealth) health = maxHealth;
     }
     
+    public void increaseMaxHealth(int amount) {
+        maxHealth += amount;
+        health += amount; // Also heal by the same amount
+    }
+    
     public void increaseSpeed(int amount) {
         speed += amount;
     }

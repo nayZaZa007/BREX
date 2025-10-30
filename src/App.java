@@ -13,6 +13,9 @@ public class App {
             frame.setLocationRelativeTo(null);
             frame.setVisible(true);
             
+            // Apply fullscreen setting from loaded settings
+            game.applyInitialFullscreen();
+            
             game.startGame();
         });
     }

@@ -1,0 +1,292 @@
+@startuml Game Architecture Class Diagram
+
+' ============================================
+' Main Game Controller
+' ============================================
+class SpaceGame {
+  - player: Player
+  - boss: Boss
+  - enemies: ArrayList<Enemy>
+  - bullets: ArrayList<Bullet>
+  - enemyBullets: ArrayList<EnemyBullet>
+  - currentState: GameState
+  - currentLevel: int
+  - level2Unlocked: boolean
+  + actionPerformed(ActionEvent)
+  + paintComponent(Graphics)
+}
+
+' ============================================
+' Core Entity Classes
+' ============================================
+class Player {
+  - x, y: double
+  - health: int
+  - maxHealth: int
+  - speed: double
+  - fireRate: int
+  - sprite: BufferedImage
+  + move(dx, dy, delta)
+  + shoot(targetX, targetY)
+  + takeDamage(int)
+  + increaseMaxHealth(int)
+}
+
+class Enemy {
+  - x, y: double
+  - health: int
+  - type: EnemyType
+  - speed: double
+  - sprite: BufferedImage
+  - activeLaser: LaserBeam
+  + update(delta)
+  + shoot(): EnemyBullet
+  + takeDamage(int)
+  + draw(Graphics2D)
+}
+
+class Boss {
+  - x, y: double
+  - health: int
+  - maxHealth: int
+  - currentPhase: AttackPhase
+  - phaseTimer: double
+  - sprite: BufferedImage
+  + update(delta, playerX, playerY)
+  + shoot(): BossBullet
+  + spawnEnemy(): Enemy
+  + draw(Graphics2D)
+}
+
+' ============================================
+' Projectile Classes
+' ============================================
+class Bullet {
+  - x, y: double
+  - dx, dy: double
+  - damage: int
+  - speed: double
+  + update(delta)
+  + draw(Graphics2D)
+  + isExpired(): boolean
+}
+
+class EnemyBullet {
+  - x, y: double
+  - dx, dy: double
+  - speed: double
+  + update(delta)
+  + draw(Graphics2D)
+}
+
+class BossBullet {
+  - x, y: double
+  - targetX, targetY: int
+  - isHoming: boolean
+  + update(delta, playerX, playerY)
+  + draw(Graphics2D)
+}
+
+' ============================================
+' Support Classes
+' ============================================
+class PowerUp {
+  - x, y: int
+  - type: PowerUpType
+  - color: Color
+  - spawnTime: long
+  + draw(Graphics2D)
+  + isExpired(): boolean
+  + getType(): PowerUpType
+}
+
+class LaserBeam {
+  - startX, startY: int
+  - endX, endY: int
+  - active: boolean
+  - startTime: long
+  + update(delta)
+  + draw(Graphics2D)
+  + isActive(): boolean
+}
+
+class BossLaser {
+  - x, y: double
+  - angle: double
+  - length: int
+  - rotationSpeed: double
+  + update(delta)
+  + draw(Graphics2D)
+  + checkCollision(Player): boolean
+}
+
+' ============================================
+' Base Class & Interfaces
+' ============================================
+abstract class GameObject {
+  # x, y: double
+  # width, height: int
+  # collisionRadius: int
+  + getCenterX(): int
+  + getCenterY(): int
+  + {abstract} draw(Graphics2D)
+  + {abstract} update(long)
+  + collidesWith(Collidable): boolean
+}
+
+interface Drawable {
+  + draw(Graphics2D)
+}
+
+interface Updatable {
+  + update(long)
+}
+
+interface Collidable {
+  + getCenterX(): int
+  + getCenterY(): int
+  + getCollisionRadius(): int
+  + collidesWith(Collidable): boolean
+}
+
+' ============================================
+' Manager Classes
+' ============================================
+class EntityManager {
+  - entities: List<GameObject>
+  - entitiesToAdd: List<GameObject>
+  - entitiesToRemove: List<GameObject>
+  + addEntity(GameObject)
+  + removeEntity(GameObject)
+  + updateAll(long)
+  + drawAll(Graphics2D)
+  + getEntitiesOfType(Class<T>): List<T>
+  + clear()
+}
+
+class CollisionManager {
+  + checkCollisions(List<T>, List<U>, handler)
+  + findCollision(T, List<U>): U
+}
+
+class GameStateManager {
+  - currentState: GameState
+  - lastState: GameState
+  + setState(GameState)
+  + getCurrentState(): GameState
+  + returnToPreviousState()
+  + isInGame(): boolean
+}
+
+class InputManager {
+  - pressedKeys: Set<Integer>
+  - justPressedKeys: Set<Integer>
+  + isKeyPressed(int): boolean
+  + isKeyJustPressed(int): boolean
+  + clearJustPressed()
+}
+
+' ============================================
+' Enums
+' ============================================
+enum GameState {
+  MENU
+  LEVEL_SELECT
+  SPACECRAFT_SELECT
+  GAME
+  OPTIONS
+  PAUSED
+  LEVEL_UP
+  LEVEL1_WIN
+  EXIT_CONFIRM
+}
+
+enum EnemyType {
+  TYPE1
+  TYPE2
+  TYPE3
+}
+
+enum AttackPhase {
+  BARRAGE
+  LASER_SPIN
+  HOMING
+}
+
+enum PowerUpType {
+  HEALTH
+  SPEED
+  FIRE_RATE
+}
+
+' ============================================
+' Entry Point
+' ============================================
+class App {
+  + main(String[])
+}
+
+' ============================================
+' Relationships
+' ============================================
+
+' Inheritance
+GameObject --|> Drawable
+GameObject --|> Updatable
+GameObject --|> Collidable
+
+' Composition (SpaceGame contains entities)
+SpaceGame *-- Player
+SpaceGame *-- Boss
+SpaceGame o-- "0..*" Enemy
+SpaceGame o-- "0..*" Bullet
+SpaceGame o-- "0..*" EnemyBullet
+SpaceGame o-- "0..*" BossBullet
+SpaceGame o-- "0..*" PowerUp
+
+' Associations
+SpaceGame --> GameState
+Enemy --> EnemyType
+Boss --> AttackPhase
+PowerUp --> PowerUpType
+Enemy --> LaserBeam
+Boss --> BossLaser
+
+' Manager relationships
+EntityManager o-- "0..*" GameObject
+CollisionManager ..> Collidable : uses
+GameStateManager --> GameState
+
+' Entry point
+App ..> SpaceGame : creates
+
+' Boss spawns enemies
+Boss ..> Enemy : spawns
+
+' Enemy can have laser
+Enemy o-- "0..1" LaserBeam
+
+note right of SpaceGame
+  Main game controller handling:
+  - Game loop (60 FPS)
+  - State management
+  - Entity updates
+  - Collision detection
+  - Rendering
+end note
+
+note right of GameObject
+  Abstract base class providing:
+  - Common properties
+  - Collision detection
+  - Interface implementations
+end note
+
+note right of EntityManager
+  Manages entity lifecycle:
+  - Deferred add/remove
+  - Batch updates
+  - Type-based queries
+end note
+
+@enduml
