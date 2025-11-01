@@ -187,12 +187,13 @@ java -cp bin App
 
 ### การควบคุม - Player 1:
 - **W, A, S, D** หรือ **Arrow Keys**: เคลื่อนที่
+- **F**: ใช้ความสามารถ
 - **J** : Toggle Co-op Mode
 - **ESC**: หยุดเกมชั่วคราว (Pause)
 
 ### การควบคุม - Player 2 (Co-op Mode):
 - **Arrow Keys**: เคลื่อนที่
-- **RShift**: ความสามารถ
+- **RShift**: ใช้ความสามารถ
 
 ### เมนูหลัก:
 - ใช้ **Arrow Keys** + **Enter** เพื่อเลือก
